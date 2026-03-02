@@ -4,32 +4,63 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import LoanLayout from "./components/LoanLayout";
 import Home from "./pages/Home";
+import Dashboard from "./pages/Dashboard";
+import LoanList from "./pages/LoanList";
+import LoanForm from "./pages/LoanForm";
+import LoanDetail from "./pages/LoanDetail";
+import Approvals from "./pages/Approvals";
+import Stats from "./pages/Stats";
+import AiVideo from "./pages/AiVideo";
+import AiAnalysis from "./pages/AiAnalysis";
+import Notifications from "./pages/Notifications";
+import Users from "./pages/Users";
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
+      <Route path="/" component={Home} />
+      <Route path="/dashboard">
+        <LoanLayout><Dashboard /></LoanLayout>
+      </Route>
+      <Route path="/loans/new">
+        <LoanLayout><LoanForm /></LoanLayout>
+      </Route>
+      <Route path="/loans/:id">
+        <LoanLayout><LoanDetail /></LoanLayout>
+      </Route>
+      <Route path="/loans">
+        <LoanLayout><LoanList /></LoanLayout>
+      </Route>
+      <Route path="/approvals">
+        <LoanLayout><Approvals /></LoanLayout>
+      </Route>
+      <Route path="/stats">
+        <LoanLayout><Stats /></LoanLayout>
+      </Route>
+      <Route path="/ai-video">
+        <LoanLayout><AiVideo /></LoanLayout>
+      </Route>
+      <Route path="/ai-analysis">
+        <LoanLayout><AiAnalysis /></LoanLayout>
+      </Route>
+      <Route path="/notifications">
+        <LoanLayout><Notifications /></LoanLayout>
+      </Route>
+      <Route path="/users">
+        <LoanLayout><Users /></LoanLayout>
+      </Route>
+      <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
   );
 }
 
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
-
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
+      <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
           <Router />
