@@ -412,6 +412,90 @@ export const appRouter = router({
         return { extracted, rawAnswer: answerStr };
       }),
 
+    // 批量征信报告图片提取
+    batchExtractCreditReport: withPermission("view_ai_analysis")
+      .input(z.object({ imageUrls: z.array(z.string().min(1)).min(1).max(20) }))
+      .mutation(async ({ ctx, input }) => {
+        const DOUBAO_CHAT_API_KEY = process.env.DOUBAO_CHAT_API_KEY;
+        if (!DOUBAO_CHAT_API_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "AI分析API未配置" });
+
+        const systemPrompt = `你是一个专业的征信报告信息提取助手。请仔细分析用户上传的征信报告图片，提取以下关键信息并以严格的JSON格式返回（不要包含任何其他文字，只返回JSON）：
+
+{
+  "customerName": "客户姓名",
+  "customerPhone": "手机号码（如有）",
+  "customerIdCard": "身份证号码（如有）",
+  "creditScore": 信用评分数值（如有，整数，没有则为null）,
+  "monthlyIncome": "月收入金额（如有，纯数字字符串，没有则为null）",
+  "totalDebt": "总负债金额（如有，纯数字字符串，没有则为null）",
+  "hasOverdue": 是否有逾期（1表示有，0表示无）,
+  "customerGrade": "客户等级（A/B/C/D，根据信用情况判断：A=优秀 B=良好 C=一般 D=较差）",
+  "loanCount": 贷款笔数（整数，没有则为0）,
+  "creditCardCount": 信用卡数量（整数，没有则为0）,
+  "overdueCount": 逾期次数（整数，没有则为0）,
+  "overdueAmount": "逾期金额（纯数字字符串，没有则为null）",
+  "queryCount": 近期查询次数（整数，没有则为0）,
+  "summary": "征信报告综合评价摘要（100字以内）",
+  "riskLevel": "风险等级（低风险/中风险/高风险）",
+  "suggestions": "贷款建议（200字以内）"
+}
+
+注意：
+1. 如果图片不是征信报告，请返回 {"error": "上传的图片不是征信报告，请上传正确的征信报告图片"}
+2. 无法识别的字段填null
+3. 金额字段只保留数字，不要包含货币符号
+4. 必须返回有效的JSON格式`;
+
+        const results: Array<{ index: number; imageUrl: string; extracted: any; rawAnswer: string; status: "success" | "error"; errorMsg?: string }> = [];
+
+        // 逐张处理图片
+        for (let i = 0; i < input.imageUrls.length; i++) {
+          const imageUrl = input.imageUrls[i];
+          try {
+            const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${DOUBAO_CHAT_API_KEY}` },
+              body: JSON.stringify({
+                model: "doubao-seed-2-0-pro-260215",
+                input: [
+                  { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
+                  { role: "user", content: [
+                    { type: "input_image", image_url: imageUrl },
+                    { type: "input_text", text: "请分析这张征信报告图片，提取所有关键信息并以JSON格式返回。" }
+                  ]}
+                ]
+              }),
+            });
+            if (!response.ok) {
+              const errText = await response.text();
+              results.push({ index: i, imageUrl, extracted: {}, rawAnswer: errText, status: "error", errorMsg: `API请求失败: ${response.status}` });
+              continue;
+            }
+            const data = await response.json();
+            const rawAnswer = data.output?.choices?.[0]?.message?.content ?? data.output?.text ?? data.output ?? "{}";
+            const answerStr = typeof rawAnswer === "string" ? rawAnswer : JSON.stringify(rawAnswer);
+            let extracted: any = {};
+            try {
+              const cleaned = answerStr.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+              extracted = JSON.parse(cleaned);
+            } catch {
+              extracted = { summary: answerStr, error: "AI返回格式异常" };
+            }
+            results.push({ index: i, imageUrl, extracted, rawAnswer: answerStr, status: extracted.error ? "error" : "success" });
+          } catch (e: any) {
+            results.push({ index: i, imageUrl, extracted: {}, rawAnswer: "", status: "error", errorMsg: e.message });
+          }
+        }
+
+        await createOperationLog({
+          userId: ctx.user.id, userName: ctx.user.name ?? "",
+          action: "batch_extract_credit", module: "ai_analysis",
+          detail: `批量征信提取: ${input.imageUrls.length}张图片, 成功${results.filter(r => r.status === "success").length}张`
+        });
+
+        return { results, total: input.imageUrls.length, successCount: results.filter(r => r.status === "success").length };
+      }),
+
     analyze: withPermission("view_ai_analysis")
       .input(z.object({ question: z.string().min(1), context: z.string().optional(), imageUrl: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
