@@ -56,7 +56,7 @@ export default function Settings() {
             <div><h3 className="text-sm font-semibold text-foreground">AI服务配置</h3><p className="text-xs text-muted-foreground">豆包API集成状态</p></div>
           </div>
           <div className="space-y-3 text-xs">
-            <div className="flex justify-between p-3 rounded-lg bg-muted/20"><span className="text-muted-foreground">视频生成模型</span><span className="text-foreground">doubao-seedance-1-5-pro-251215</span></div>
+            <div className="flex justify-between p-3 rounded-lg bg-muted/20"><span className="text-muted-foreground">图文生成模型</span><span className="text-foreground">doubao-seed-2-0-pro-260215</span></div>
             <div className="flex justify-between p-3 rounded-lg bg-muted/20"><span className="text-muted-foreground">对话分析模型</span><span className="text-foreground">doubao-seed-2-0-pro-260215</span></div>
             <div className="flex justify-between p-3 rounded-lg bg-muted/20"><span className="text-muted-foreground">API状态</span><span className="text-emerald-400">已配置</span></div>
           </div>

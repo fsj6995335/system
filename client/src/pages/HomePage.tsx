@@ -28,7 +28,7 @@ export default function HomePage() {
     if (hasPermission(effectiveRole, "use_ai_assistant"))
       actions.push({ icon: Bot, label: "AI助手", path: "/ai-assistant", color: "from-cyan-500/20 to-cyan-600/10", iconColor: "text-cyan-400" });
     if (hasPermission(effectiveRole, "use_ai_video"))
-      actions.push({ icon: Video, label: "AI视频", path: "/ai-video", color: "from-pink-500/20 to-pink-600/10", iconColor: "text-pink-400" });
+      actions.push({ icon: FileText, label: "AI图文", path: "/ai-video", color: "from-pink-500/20 to-pink-600/10", iconColor: "text-pink-400" });
     return actions;
   }, [effectiveRole]);
 

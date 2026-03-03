@@ -1,13 +1,12 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { SYSTEM_ROLES, ROLE_PERMISSIONS, hasPermission, getEffectiveRole, type SystemRole } from "../../../shared/permissions";
 import {
   BarChart3, Bell, Bot, Building2, ChevronRight, ClipboardList, CreditCard,
   FileText, Home, LayoutDashboard, LogOut, Menu, Monitor, ScrollText,
-  Settings, Shield, Trophy, Users, Video, X, RefreshCw,
+  Settings, Shield, Trophy, Users, Video, X, RefreshCw, UserCheck,
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 
 interface NavItem {
@@ -29,7 +28,7 @@ const allNavItems: NavItem[] = [
   { icon: Trophy, label: "排名榜单", path: "/rankings", permission: "view_rankings", section: "业务管理" },
   { icon: BarChart3, label: "AI分析", path: "/ai-analysis", permission: "view_ai_analysis", section: "AI功能" },
   { icon: Bot, label: "AI助手", path: "/ai-assistant", permission: "use_ai_assistant", section: "AI功能" },
-  { icon: Video, label: "AI视频工作室", path: "/ai-video", permission: "use_ai_video", section: "AI功能" },
+  { icon: FileText, label: "AI图文工作室", path: "/ai-video", permission: "use_ai_video", section: "AI功能" },
   { icon: Building2, label: "分公司管理", path: "/branches", permission: "manage_branches", section: "系统管理" },
   { icon: Users, label: "员工管理", path: "/employees", permission: "manage_employees", section: "系统管理" },
   { icon: Settings, label: "系统设置", path: "/settings", permission: "system_settings", section: "系统管理" },
@@ -50,8 +49,103 @@ function getRoleBadge(role: string) {
   return map[role] ?? { label: role, color: "bg-gray-500/20 text-gray-400" };
 }
 
+interface DevUser {
+  id: number;
+  openId: string;
+  name: string | null;
+  role: string;
+  branchId: number | null;
+  teamId: number | null;
+  position: string | null;
+}
+
+// 开发模式用户切换浮动条
+function DevUserSwitcher({ currentUser, onSwitch }: { currentUser: any; onSwitch: () => void }) {
+  const [devUsers, setDevUsers] = useState<DevUser[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/dev/users")
+      .then(res => res.json())
+      .then(data => setDevUsers(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  const switchToUser = useCallback(async (openId: string) => {
+    setSwitching(true);
+    try {
+      await fetch("/api/dev/switch-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ openId }),
+      });
+      window.location.reload();
+    } catch (e) {
+      setSwitching(false);
+    }
+  }, []);
+
+  const currentOpenId = currentUser?.openId || "";
+
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[9999] bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 text-white shadow-lg">
+      <div className="flex items-center justify-between px-4 py-2">
+        <div className="flex items-center gap-2 text-xs">
+          <UserCheck className="w-4 h-4" />
+          <span className="font-semibold">测试模式</span>
+          <span className="opacity-70">|</span>
+          <span>当前用户: <strong>{currentUser?.name || "未登录"}</strong></span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            currentUser?.role === "boss" ? "bg-amber-400/30" :
+            currentUser?.role === "director" ? "bg-blue-400/30" :
+            currentUser?.role === "shareholder" ? "bg-purple-400/30" :
+            currentUser?.role === "leader" ? "bg-green-400/30" :
+            currentUser?.role === "finance" ? "bg-cyan-400/30" :
+            "bg-gray-400/30"
+          }`}>
+            {getRoleBadge(currentUser?.role || "employee").label}
+          </span>
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 transition-colors font-medium"
+        >
+          {expanded ? "收起" : "切换角色用户 ▼"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="px-4 pb-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+          {devUsers.map((u) => {
+            const badge = getRoleBadge(u.role);
+            const isActive = u.openId === currentOpenId;
+            return (
+              <button
+                key={u.openId}
+                disabled={switching || isActive}
+                onClick={() => switchToUser(u.openId)}
+                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs transition-all ${
+                  isActive
+                    ? "bg-white/30 ring-2 ring-white font-bold"
+                    : "bg-white/10 hover:bg-white/20"
+                } ${switching ? "opacity-50" : ""}`}
+              >
+                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold">
+                  {u.name?.charAt(0) || "?"}
+                </div>
+                <span className="font-medium truncate max-w-full">{u.name || u.openId}</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${badge.color}`}>{badge.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LoanLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, isAuthenticated, logout } = useAuth();
+  const { user, loading, isAuthenticated, logout, refresh } = useAuth();
   const [location] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
@@ -90,6 +184,7 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
   }
 
   if (!isAuthenticated) {
+    // 开发模式下不显示登录页，显示提示
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-6 max-w-sm mx-auto px-4">
@@ -98,14 +193,9 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
           </div>
           <div>
             <h1 className="text-2xl font-bold gradient-text mb-2">内部贷款管理系统</h1>
-            <p className="text-muted-foreground text-sm">请登录以访问系统</p>
+            <p className="text-muted-foreground text-sm">正在自动登录，请稍候...</p>
           </div>
-          <a
-            href={getLoginUrl()}
-            className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-8 py-3 rounded-xl font-medium hover:bg-primary/90 transition-all elegant-shadow"
-          >
-            登录系统 <ChevronRight className="w-4 h-4" />
-          </a>
+          <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin mx-auto" />
         </div>
       </div>
     );
@@ -221,55 +311,60 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
   };
 
   return (
-    <div className="min-h-screen bg-background flex">
-      {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex w-60 flex-col bg-sidebar border-r border-sidebar-border flex-shrink-0 sticky top-0 h-screen">
-        <SidebarContent />
-      </aside>
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* 开发模式用户切换浮动条 */}
+      <DevUserSwitcher currentUser={user} onSwitch={refresh} />
 
-      {/* Mobile Sidebar Overlay */}
-      {sidebarOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
-          <aside className="relative w-64 bg-sidebar border-r border-sidebar-border flex flex-col z-50">
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground z-10"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <SidebarContent />
-          </aside>
-        </div>
-      )}
+      <div className="flex flex-1" style={{ marginTop: "40px" }}>
+        {/* Desktop Sidebar */}
+        <aside className="hidden lg:flex w-60 flex-col bg-sidebar border-r border-sidebar-border flex-shrink-0 sticky top-[40px] h-[calc(100vh-40px)]">
+          <SidebarContent />
+        </aside>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile Header */}
-        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-          <h1 className="text-sm font-semibold text-foreground">贷款管理系统</h1>
-          <div className="ml-auto flex items-center gap-2">
-            {unreadCount > 0 && (
-              <Link href="/notifications">
-                <div className="relative p-2">
-                  <Bell className="w-5 h-5 text-muted-foreground" />
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full" />
-                </div>
-              </Link>
-            )}
+        {/* Mobile Sidebar Overlay */}
+        {sidebarOpen && (
+          <div className="lg:hidden fixed inset-0 z-50 flex" style={{ top: "40px" }}>
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" style={{ top: "40px" }} onClick={() => setSidebarOpen(false)} />
+            <aside className="relative w-64 bg-sidebar border-r border-sidebar-border flex flex-col z-50">
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="absolute top-4 right-4 p-1.5 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground z-10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <SidebarContent />
+            </aside>
           </div>
-        </header>
+        )}
 
-        {/* Page Content */}
-        <main className="flex-1 overflow-auto">
-          <div className="p-4 lg:p-6">{children}</div>
-        </main>
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Mobile Header */}
+          <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm sticky top-[40px] z-40">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <h1 className="text-sm font-semibold text-foreground">贷款管理系统</h1>
+            <div className="ml-auto flex items-center gap-2">
+              {unreadCount > 0 && (
+                <Link href="/notifications">
+                  <div className="relative p-2">
+                    <Bell className="w-5 h-5 text-muted-foreground" />
+                    <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full" />
+                  </div>
+                </Link>
+              )}
+            </div>
+          </header>
+
+          {/* Page Content */}
+          <main className="flex-1 overflow-auto">
+            <div className="p-4 lg:p-6">{children}</div>
+          </main>
+        </div>
       </div>
     </div>
   );

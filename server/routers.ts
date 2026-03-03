@@ -287,32 +287,83 @@ export const appRouter = router({
       }),
   }),
 
-  // ============ AI视频工作室 ============
+  // ============ AI图文工作室 ============
   aiVideo: router({
     create: withPermission("use_ai_video")
-      .input(z.object({ prompt: z.string().min(1), imageUrl: z.string().optional(), title: z.string().optional() }))
+      .input(z.object({
+        prompt: z.string().min(1),
+        type: z.enum(["marketing", "wechat", "product", "poster", "custom"]).default("marketing"),
+        title: z.string().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
-        const DOUBAO_VIDEO_API_KEY = process.env.DOUBAO_VIDEO_API_KEY;
-        if (!DOUBAO_VIDEO_API_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "视频API未配置" });
-        const dbResult = await createAiVideoTask({ userId: ctx.user.id, prompt: input.prompt, imageUrl: input.imageUrl, title: input.title });
+        const DOUBAO_CHAT_API_KEY = process.env.DOUBAO_CHAT_API_KEY;
+        if (!DOUBAO_CHAT_API_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "AI图文API未配置" });
+        const dbResult = await createAiVideoTask({ userId: ctx.user.id, prompt: input.prompt, title: input.title });
         const taskDbId = (dbResult as any).insertId;
         try {
-          const content: any[] = [{ type: "text", text: input.prompt }];
-          if (input.imageUrl) content.push({ type: "image_url", image_url: { url: input.imageUrl } });
-          const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks", {
+          const typeLabels: Record<string, string> = {
+            marketing: "贷款营销推广图文",
+            wechat: "朋友圈/微信推广图文",
+            product: "银行产品介绍图文",
+            poster: "活动海报文案",
+            custom: "自定义图文",
+          };
+          const systemPrompt = `你是一个专业的贷款行业营销文案专家。请根据用户需求生成高质量的${typeLabels[input.type] || "营销图文"}内容。
+
+要求：
+1. 生成完整的图文内容，包含标题、正文、配图建议
+2. 内容要专业、有吸引力、符合金融行业规范
+3. 请严格按照以下JSON格式返回（不要包含其他文字，只返回JSON）：
+
+{
+  "title": "图文标题（简洁有力，15字以内）",
+  "subtitle": "副标题（补充说明，20字以内）",
+  "content": "正文内容（200-400字，分段落，使用\\n换行）",
+  "highlights": ["亮点1", "亮点2", "亮点3"],
+  "callToAction": "行动号召语（如：立即咨询、扫码了解等）",
+  "tags": ["标签1", "标签2", "标签3"],
+  "imagePrompt": "配图描述（用于AI生成配图的英文提示词，描述一张适合该图文的专业商务图片）",
+  "targetAudience": "目标受众描述",
+  "platform": "适合发布的平台建议"
+}`;
+          const messages = [
+            { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
+            { role: "user", content: [{ type: "input_text", text: input.prompt }] },
+          ];
+          const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/responses", {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${DOUBAO_VIDEO_API_KEY}` },
-            body: JSON.stringify({ model: "doubao-seedance-1-5-pro-251215", content }),
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${DOUBAO_CHAT_API_KEY}` },
+            body: JSON.stringify({ model: "doubao-seed-2-0-pro-260215", input: messages }),
           });
           if (!response.ok) {
             const errText = await response.text();
             await updateAiVideoTask(taskDbId, { status: "failed", errorMessage: errText });
-            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `视频生成失败: ${errText}` });
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `图文生成失败: ${errText}` });
           }
           const data = await response.json();
-          await updateAiVideoTask(taskDbId, { taskId: data.id, status: "processing" });
-          await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "create_video", module: "ai_video", detail: `创建视频任务:${input.title ?? input.prompt.slice(0, 30)}` });
-          return { taskDbId, apiTaskId: data.id };
+          // 解析 responses API 返回格式：从 output 数组中提取 message 类型的 output_text
+          let answerStr = "";
+          if (Array.isArray(data.output)) {
+            const msgItem = data.output.find((item: any) => item.type === "message");
+            if (msgItem?.content) {
+              const textContent = msgItem.content.find((c: any) => c.type === "output_text");
+              answerStr = textContent?.text ?? "";
+            }
+          } else if (Array.isArray(data)) {
+            const msgItem = data.find((item: any) => item.type === "message");
+            if (msgItem?.content) {
+              const textContent = msgItem.content.find((c: any) => c.type === "output_text");
+              answerStr = textContent?.text ?? "";
+            }
+          } else {
+            const answer = data.output?.choices?.[0]?.message?.content ?? data.output?.text ?? data.output ?? "";
+            answerStr = typeof answer === "string" ? answer : JSON.stringify(answer);
+          }
+          if (!answerStr) answerStr = JSON.stringify(data);
+          // 将生成的图文内容存储到 videoUrl 字段（复用现有字段）
+          await updateAiVideoTask(taskDbId, { status: "completed", videoUrl: answerStr });
+          await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "create_article", module: "ai_article", detail: `生成图文:${input.title ?? input.prompt.slice(0, 30)}` });
+          return { taskDbId, content: answerStr };
         } catch (err: any) {
           if (err instanceof TRPCError) throw err;
           await updateAiVideoTask(taskDbId, { status: "failed", errorMessage: err.message });
@@ -325,26 +376,6 @@ export const appRouter = router({
         const task = await getAiVideoTaskById(input.taskDbId);
         if (!task) throw new TRPCError({ code: "NOT_FOUND" });
         if (task.userId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN" });
-        if (task.status === "processing" && task.taskId) {
-          const key = process.env.DOUBAO_VIDEO_API_KEY;
-          if (!key) return task;
-          try {
-            const resp = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${task.taskId}`, {
-              headers: { Authorization: `Bearer ${key}` },
-            });
-            if (resp.ok) {
-              const data = await resp.json();
-              if (data.status === "succeeded") {
-                const videoUrl = data.content?.[0]?.video_url ?? data.content?.[0]?.url ?? "";
-                await updateAiVideoTask(input.taskDbId, { status: "completed", videoUrl });
-                return { ...task, status: "completed" as const, videoUrl };
-              } else if (data.status === "failed") {
-                await updateAiVideoTask(input.taskDbId, { status: "failed", errorMessage: data.error?.message ?? "生成失败" });
-                return { ...task, status: "failed" as const };
-              }
-            }
-          } catch {}
-        }
         return task;
       }),
     list: withPermission("use_ai_video").query(({ ctx }) => getAiVideoTasks(ctx.user.id)),
@@ -405,8 +436,25 @@ export const appRouter = router({
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `征信识别失败: ${errText}` });
         }
         const data = await response.json();
-        const rawAnswer = data.output?.choices?.[0]?.message?.content ?? data.output?.text ?? data.output ?? "{}";
-        const answerStr = typeof rawAnswer === "string" ? rawAnswer : JSON.stringify(rawAnswer);
+        // 解析 responses API 返回格式
+        let answerStr = "";
+        if (Array.isArray(data.output)) {
+          const msgItem = data.output.find((item: any) => item.type === "message");
+          if (msgItem?.content) {
+            const textContent = msgItem.content.find((c: any) => c.type === "output_text");
+            answerStr = textContent?.text ?? "";
+          }
+        } else if (Array.isArray(data)) {
+          const msgItem = data.find((item: any) => item.type === "message");
+          if (msgItem?.content) {
+            const textContent = msgItem.content.find((c: any) => c.type === "output_text");
+            answerStr = textContent?.text ?? "";
+          }
+        } else {
+          const rawAnswer = data.output?.choices?.[0]?.message?.content ?? data.output?.text ?? data.output ?? "{}";
+          answerStr = typeof rawAnswer === "string" ? rawAnswer : JSON.stringify(rawAnswer);
+        }
+        if (!answerStr) answerStr = JSON.stringify(data);
 
         // 尝试解析JSON
         let extracted: any = {};
