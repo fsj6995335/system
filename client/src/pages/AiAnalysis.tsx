@@ -6,7 +6,8 @@ import { getEffectiveRole, hasPermission } from "../../../shared/permissions";
 import {
   Brain, Send, Loader2, ShieldAlert, Sparkles, Bot, ImagePlus, FileSearch,
   CheckCircle2, AlertTriangle, User, CreditCard, DollarSign, TrendingDown,
-  ArrowRight, Upload, X, Eye, Layers, Trash2, CheckCheck, XCircle, ChevronDown, ChevronUp
+  ArrowRight, Upload, X, Eye, Layers, CheckCheck, XCircle, ChevronDown, ChevronUp,
+  FileText, File as FileIcon
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
@@ -36,16 +37,21 @@ interface ExtractedData {
   error?: string | null;
 }
 
-interface BatchImageItem {
+type FileType = "image" | "pdf";
+
+interface BatchFileItem {
   id: string;
   file: File;
-  preview: string;
+  fileType: FileType;
+  preview: string; // objectURL for images, empty for PDFs
   status: "pending" | "uploading" | "extracting" | "success" | "error";
   uploadedUrl?: string;
+  pdfBase64?: string; // base64 data for PDF files
   extracted?: ExtractedData;
   rawAnswer?: string;
   errorMsg?: string;
   imported?: boolean;
+  pdfInfo?: { pageCount: number; textLength: number };
 }
 
 const QUICK_PROMPTS = [
@@ -54,6 +60,33 @@ const QUICK_PROMPTS = [
   "分析各等级客户的转化率，给出优化建议",
   "对比各分公司的运营效率，提出改进方案",
 ];
+
+const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp,image/gif,application/pdf";
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
+function getFileType(file: File): FileType {
+  return file.type === "application/pdf" ? "pdf" : "image";
+}
+
+function validateFile(file: File): string | null {
+  const isImage = file.type.startsWith("image/");
+  const isPdf = file.type === "application/pdf";
+  if (!isImage && !isPdf) return `${file.name} 不是支持的文件格式（仅支持图片和PDF）`;
+  if (file.size > MAX_FILE_SIZE) return `${file.name} 超过20MB限制`;
+  return null;
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const result = ev.target?.result as string;
+      resolve(result.split(",")[1]);
+    };
+    reader.onerror = () => reject(new Error("文件读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
 
 type TabType = "chat" | "credit-extract" | "batch-extract";
 
@@ -93,9 +126,7 @@ export default function AiAnalysis() {
         <button
           onClick={() => setActiveTab("chat")}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-            activeTab === "chat"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
+            activeTab === "chat" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <Sparkles className="w-4 h-4" />
@@ -104,9 +135,7 @@ export default function AiAnalysis() {
         <button
           onClick={() => setActiveTab("credit-extract")}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-            activeTab === "credit-extract"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
+            activeTab === "credit-extract" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <FileSearch className="w-4 h-4" />
@@ -115,9 +144,7 @@ export default function AiAnalysis() {
         <button
           onClick={() => setActiveTab("batch-extract")}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-            activeTab === "batch-extract"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
+            activeTab === "batch-extract" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <Layers className="w-4 h-4" />
@@ -221,51 +248,73 @@ function ChatPanel() {
   );
 }
 
-// ============ 单张征信报告提取面板 ============
+// ============ 单张征信报告提取面板（支持图片+PDF） ============
 function CreditExtractPanel() {
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileType, setFileType] = useState<FileType>("image");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
   const [rawAnswer, setRawAnswer] = useState<string>("");
   const [showRaw, setShowRaw] = useState(false);
+  const [pdfInfo, setPdfInfo] = useState<{ pageCount: number; textLength: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const uploadMut = trpc.upload.file.useMutation();
-  const extractMut = trpc.aiAnalysis.extractCreditReport.useMutation();
+  const extractImageMut = trpc.aiAnalysis.extractCreditReport.useMutation();
+  const extractPdfMut = trpc.aiAnalysis.extractCreditPdf.useMutation();
   const createCreditMut = trpc.creditReports.create.useMutation();
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) { toast.error("请上传图片文件（JPG/PNG等）"); return; }
-    if (file.size > 10 * 1024 * 1024) { toast.error("图片大小不能超过10MB"); return; }
-    setImageFile(file);
+    const error = validateFile(file);
+    if (error) { toast.error(error); return; }
+
+    const ft = getFileType(file);
+    setSelectedFile(file);
+    setFileType(ft);
     setExtractedData(null);
     setRawAnswer("");
-    const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
-    reader.readAsDataURL(file);
+    setPdfInfo(null);
+
+    if (ft === "image") {
+      const reader = new FileReader();
+      reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setImagePreview(null);
+    }
   }, []);
 
   const handleExtract = async () => {
-    if (!imageFile || extracting) return;
+    if (!selectedFile || extracting) return;
     setExtracting(true);
     setExtractedData(null);
+
     try {
-      const reader = new FileReader();
-      const base64 = await new Promise<string>((resolve) => {
-        reader.onload = (ev) => { resolve((ev.target?.result as string).split(",")[1]); };
-        reader.readAsDataURL(imageFile);
-      });
-      toast.info("正在上传图片...");
-      const { url } = await uploadMut.mutateAsync({ fileName: imageFile.name, fileData: base64, contentType: imageFile.type });
-      toast.info("正在AI识别征信报告...");
-      const result = await extractMut.mutateAsync({ imageUrl: url });
-      setExtractedData(result.extracted);
-      setRawAnswer(result.rawAnswer);
-      if (result.extracted?.error) { toast.warning(result.extracted.error); }
-      else { toast.success("征信报告信息提取完成！"); }
+      if (fileType === "image") {
+        // 图片模式：先上传S3再调用视觉模型
+        toast.info("正在上传图片...");
+        const base64 = await readFileAsBase64(selectedFile);
+        const { url } = await uploadMut.mutateAsync({ fileName: selectedFile.name, fileData: base64, contentType: selectedFile.type });
+        toast.info("正在AI识别征信报告...");
+        const result = await extractImageMut.mutateAsync({ imageUrl: url });
+        setExtractedData(result.extracted);
+        setRawAnswer(result.rawAnswer);
+        if (result.extracted?.error) { toast.warning(result.extracted.error); }
+        else { toast.success("征信报告信息提取完成！"); }
+      } else {
+        // PDF模式：读取base64发送给后端解析
+        toast.info("正在解析PDF文件...");
+        const base64 = await readFileAsBase64(selectedFile);
+        const result = await extractPdfMut.mutateAsync({ pdfData: base64, fileName: selectedFile.name });
+        setExtractedData(result.extracted);
+        setRawAnswer(result.rawAnswer);
+        setPdfInfo(result.pdfInfo);
+        if (result.extracted?.error) { toast.warning(result.extracted.error); }
+        else { toast.success(`PDF征信报告提取完成！（${result.pdfInfo.pageCount}页，${result.pdfInfo.textLength}字）`); }
+      }
     } catch (e: any) {
       toast.error(`提取失败: ${e.message}`);
     } finally {
@@ -285,7 +334,7 @@ function CreditExtractPanel() {
         monthlyIncome: extractedData.monthlyIncome ?? undefined,
         totalDebt: extractedData.totalDebt ?? undefined,
         hasOverdue: extractedData.hasOverdue ?? 0,
-        notes: `[AI自动提取]\n风险等级: ${extractedData.riskLevel ?? "未知"}\n综合评价: ${extractedData.summary ?? ""}\n贷款建议: ${extractedData.suggestions ?? ""}\n贷款笔数: ${extractedData.loanCount ?? 0}\n信用卡数: ${extractedData.creditCardCount ?? 0}\n逾期次数: ${extractedData.overdueCount ?? 0}\n逾期金额: ${extractedData.overdueAmount ?? "0"}\n近期查询: ${extractedData.queryCount ?? 0}次`,
+        notes: `[AI自动提取-${fileType === "pdf" ? "PDF" : "图片"}]\n风险等级: ${extractedData.riskLevel ?? "未知"}\n综合评价: ${extractedData.summary ?? ""}\n贷款建议: ${extractedData.suggestions ?? ""}\n贷款笔数: ${extractedData.loanCount ?? 0}\n信用卡数: ${extractedData.creditCardCount ?? 0}\n逾期次数: ${extractedData.overdueCount ?? 0}\n逾期金额: ${extractedData.overdueAmount ?? "0"}\n近期查询: ${extractedData.queryCount ?? 0}次${pdfInfo ? `\nPDF页数: ${pdfInfo.pageCount}\n文本长度: ${pdfInfo.textLength}字` : ""}`,
       });
       toast.success("已成功导入到征信系统！");
     } catch (e: any) {
@@ -294,7 +343,7 @@ function CreditExtractPanel() {
   };
 
   const handleClear = () => {
-    setImageFile(null); setImagePreview(null); setExtractedData(null); setRawAnswer("");
+    setSelectedFile(null); setImagePreview(null); setExtractedData(null); setRawAnswer(""); setPdfInfo(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -306,38 +355,88 @@ function CreditExtractPanel() {
           <div className="glass-card rounded-xl p-5">
             <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
               <ImagePlus className="w-4 h-4 text-purple-400" />
-              上传征信报告图片
+              上传征信报告
             </h3>
-            <p className="text-xs text-muted-foreground mb-4">支持 JPG、PNG 格式，最大 10MB。AI 将自动识别并提取征信报告中的关键信息。</p>
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
-            {!imagePreview ? (
+            <p className="text-xs text-muted-foreground mb-4">
+              支持 <span className="text-primary font-medium">JPG、PNG 图片</span> 和 <span className="text-blue-400 font-medium">PDF 文档</span> 格式，最大 20MB。AI 将自动识别并提取征信报告中的关键信息。
+            </p>
+            <input ref={fileInputRef} type="file" accept={ACCEPTED_TYPES} onChange={handleFileSelect} className="hidden" />
+
+            {!selectedFile ? (
               <button onClick={() => fileInputRef.current?.click()} className="w-full h-48 border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-3 hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer">
                 <Upload className="w-8 h-8 text-muted-foreground/50" />
-                <span className="text-sm text-muted-foreground">点击或拖拽上传征信报告图片</span>
-                <span className="text-xs text-muted-foreground/50">JPG / PNG，最大 10MB</span>
+                <span className="text-sm text-muted-foreground">点击上传征信报告</span>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground/50">
+                  <span className="flex items-center gap-1"><ImagePlus className="w-3 h-3" />JPG / PNG</span>
+                  <span className="text-muted-foreground/30">|</span>
+                  <span className="flex items-center gap-1"><FileText className="w-3 h-3" />PDF</span>
+                </div>
               </button>
-            ) : (
+            ) : fileType === "image" && imagePreview ? (
               <div className="relative">
                 <img src={imagePreview} alt="征信报告预览" className="w-full max-h-64 object-contain rounded-xl border border-border" />
                 <button onClick={handleClear} className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors">
                   <X className="w-4 h-4 text-white" />
                 </button>
               </div>
+            ) : (
+              <div className="relative w-full h-48 border border-border rounded-xl flex flex-col items-center justify-center gap-3 bg-muted/10">
+                <div className="w-16 h-16 rounded-xl bg-red-500/10 flex items-center justify-center">
+                  <FileText className="w-8 h-8 text-red-400" />
+                </div>
+                <p className="text-sm font-medium text-foreground">{selectedFile.name}</p>
+                <p className="text-xs text-muted-foreground">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                <button onClick={handleClear} className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors">
+                  <X className="w-4 h-4 text-white" />
+                </button>
+              </div>
             )}
+
             <div className="flex gap-2 mt-4">
-              <Button onClick={handleExtract} disabled={!imageFile || extracting} className="flex-1">
-                {extracting ? (<><Loader2 className="w-4 h-4 animate-spin mr-2" />AI 识别中...</>) : (<><FileSearch className="w-4 h-4 mr-2" />开始提取信息</>)}
+              <Button onClick={handleExtract} disabled={!selectedFile || extracting} className="flex-1">
+                {extracting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    {fileType === "pdf" ? "PDF解析中..." : "AI识别中..."}
+                  </>
+                ) : (
+                  <><FileSearch className="w-4 h-4 mr-2" />开始提取信息</>
+                )}
               </Button>
-              {imageFile && (<Button variant="outline" onClick={() => fileInputRef.current?.click()}>重新选择</Button>)}
+              {selectedFile && (<Button variant="outline" onClick={() => fileInputRef.current?.click()}>重新选择</Button>)}
             </div>
           </div>
+
+          {/* 提取进度 */}
           {extracting && (
             <div className="glass-card rounded-xl p-4">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-purple-400" /></div>
+                <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                </div>
                 <div>
-                  <p className="text-sm font-medium text-foreground">正在分析征信报告...</p>
-                  <p className="text-xs text-muted-foreground">豆包视觉模型正在识别图片中的关键信息</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {fileType === "pdf" ? "正在解析PDF征信报告..." : "正在分析征信报告..."}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {fileType === "pdf"
+                      ? "提取PDF文本内容 → 豆包AI结构化分析"
+                      : "豆包视觉模型正在识别图片中的关键信息"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PDF信息 */}
+          {pdfInfo && (
+            <div className="glass-card rounded-xl p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center">
+                  <FileText className="w-4 h-4 text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">PDF解析信息</p>
+                  <p className="text-xs text-muted-foreground">共 {pdfInfo.pageCount} 页，提取 {pdfInfo.textLength.toLocaleString()} 字文本</p>
                 </div>
               </div>
             </div>
@@ -350,7 +449,7 @@ function CreditExtractPanel() {
             <div className="flex flex-col items-center justify-center h-full text-center">
               <FileSearch className="w-12 h-12 text-muted-foreground/20 mb-4" />
               <h3 className="text-base font-semibold text-foreground mb-2">等待提取</h3>
-              <p className="text-sm text-muted-foreground max-w-xs">上传征信报告图片后，AI 将自动识别并提取关键字段</p>
+              <p className="text-sm text-muted-foreground max-w-xs">上传征信报告（图片或PDF）后，AI 将自动识别并提取关键字段</p>
             </div>
           )}
           {extractedData && <ExtractResultCard data={extractedData} rawAnswer={rawAnswer} showRaw={showRaw} onToggleRaw={() => setShowRaw(!showRaw)} onImport={handleImportToCreditSystem} />}
@@ -360,116 +459,125 @@ function CreditExtractPanel() {
   );
 }
 
-// ============ 批量征信报告提取面板 ============
+// ============ 批量征信报告提取面板（支持图片+PDF混合） ============
 function BatchExtractPanel() {
-  const [images, setImages] = useState<BatchImageItem[]>([]);
+  const [files, setFiles] = useState<BatchFileItem[]>([]);
   const [processing, setProcessing] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const uploadMut = trpc.upload.file.useMutation();
-  const batchExtractMut = trpc.aiAnalysis.batchExtractCreditReport.useMutation();
+  const batchMixedMut = trpc.aiAnalysis.batchMixedExtract.useMutation();
   const createCreditMut = trpc.creditReports.create.useMutation();
 
   const handleFilesSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    if (files.length === 0) return;
+    const selectedFiles = Array.from(e.target.files ?? []);
+    if (selectedFiles.length === 0) return;
 
-    const validFiles = files.filter(f => {
-      if (!f.type.startsWith("image/")) { toast.error(`${f.name} 不是图片文件，已跳过`); return false; }
-      if (f.size > 10 * 1024 * 1024) { toast.error(`${f.name} 超过10MB，已跳过`); return false; }
+    const validFiles = selectedFiles.filter(f => {
+      const error = validateFile(f);
+      if (error) { toast.error(error); return false; }
       return true;
     });
 
-    if (images.length + validFiles.length > 20) {
-      toast.error("最多支持20张图片");
+    if (files.length + validFiles.length > 20) {
+      toast.error("最多支持20个文件");
       return;
     }
 
-    const newItems: BatchImageItem[] = validFiles.map(file => {
+    const newItems: BatchFileItem[] = validFiles.map(file => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const preview = URL.createObjectURL(file);
-      return { id, file, preview, status: "pending" as const };
+      const ft = getFileType(file);
+      const preview = ft === "image" ? URL.createObjectURL(file) : "";
+      return { id, file, fileType: ft, preview, status: "pending" as const };
     });
 
-    setImages(prev => [...prev, ...newItems]);
+    setFiles(prev => [...prev, ...newItems]);
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }, [images.length]);
+  }, [files.length]);
 
-  const removeImage = useCallback((id: string) => {
-    setImages(prev => {
+  const removeFile = useCallback((id: string) => {
+    setFiles(prev => {
       const item = prev.find(i => i.id === id);
-      if (item) URL.revokeObjectURL(item.preview);
+      if (item?.preview) URL.revokeObjectURL(item.preview);
       return prev.filter(i => i.id !== id);
     });
   }, []);
 
   const clearAll = useCallback(() => {
-    images.forEach(i => URL.revokeObjectURL(i.preview));
-    setImages([]);
+    files.forEach(i => { if (i.preview) URL.revokeObjectURL(i.preview); });
+    setFiles([]);
     setExpandedId(null);
-  }, [images]);
+  }, [files]);
 
   const handleBatchExtract = async () => {
-    const pendingImages = images.filter(i => i.status === "pending" || i.status === "error");
-    if (pendingImages.length === 0) { toast.info("没有待处理的图片"); return; }
+    const pendingFiles = files.filter(i => i.status === "pending" || i.status === "error");
+    if (pendingFiles.length === 0) { toast.info("没有待处理的文件"); return; }
     setProcessing(true);
 
-    // Step 1: 逐张上传图片到S3
-    const uploadedUrls: string[] = [];
-    const indexMap: Map<number, string> = new Map(); // urlIndex -> imageId
+    // Step 1: 准备所有文件数据（图片上传S3，PDF读取base64）
+    const batchItems: Array<{ type: "image" | "pdf"; imageUrl?: string; pdfData?: string; fileName: string }> = [];
+    const indexMap: Map<number, string> = new Map(); // batchIndex -> fileId
 
-    for (let i = 0; i < pendingImages.length; i++) {
-      const item = pendingImages[i];
+    for (let i = 0; i < pendingFiles.length; i++) {
+      const item = pendingFiles[i];
       setCurrentIndex(i);
-      setImages(prev => prev.map(img => img.id === item.id ? { ...img, status: "uploading" } : img));
+      setFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: "uploading" } : f));
 
       try {
-        const reader = new FileReader();
-        const base64 = await new Promise<string>((resolve) => {
-          reader.onload = (ev) => { resolve((ev.target?.result as string).split(",")[1]); };
-          reader.readAsDataURL(item.file);
-        });
-        const { url } = await uploadMut.mutateAsync({ fileName: item.file.name, fileData: base64, contentType: item.file.type });
-        uploadedUrls.push(url);
-        indexMap.set(uploadedUrls.length - 1, item.id);
-        setImages(prev => prev.map(img => img.id === item.id ? { ...img, uploadedUrl: url, status: "extracting" } : img));
+        if (item.fileType === "image") {
+          // 图片：上传到S3
+          const base64 = await readFileAsBase64(item.file);
+          const { url } = await uploadMut.mutateAsync({ fileName: item.file.name, fileData: base64, contentType: item.file.type });
+          batchItems.push({ type: "image", imageUrl: url, fileName: item.file.name });
+          indexMap.set(batchItems.length - 1, item.id);
+          setFiles(prev => prev.map(f => f.id === item.id ? { ...f, uploadedUrl: url, status: "extracting" } : f));
+        } else {
+          // PDF：读取base64
+          const base64 = await readFileAsBase64(item.file);
+          batchItems.push({ type: "pdf", pdfData: base64, fileName: item.file.name });
+          indexMap.set(batchItems.length - 1, item.id);
+          setFiles(prev => prev.map(f => f.id === item.id ? { ...f, pdfBase64: base64, status: "extracting" } : f));
+        }
       } catch (e: any) {
-        setImages(prev => prev.map(img => img.id === item.id ? { ...img, status: "error", errorMsg: `上传失败: ${e.message}` } : img));
+        setFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: "error", errorMsg: `准备失败: ${e.message}` } : f));
       }
     }
 
-    if (uploadedUrls.length === 0) {
-      toast.error("所有图片上传失败");
+    if (batchItems.length === 0) {
+      toast.error("所有文件准备失败");
       setProcessing(false);
       setCurrentIndex(-1);
       return;
     }
 
-    // Step 2: 调用批量提取API
-    toast.info(`正在AI识别 ${uploadedUrls.length} 张征信报告...`);
-    try {
-      const result = await batchExtractMut.mutateAsync({ imageUrls: uploadedUrls });
+    // Step 2: 调用批量混合提取API
+    const imageCount = batchItems.filter(i => i.type === "image").length;
+    const pdfCount = batchItems.filter(i => i.type === "pdf").length;
+    toast.info(`正在AI识别 ${batchItems.length} 个文件（${imageCount}张图片 + ${pdfCount}个PDF）...`);
 
-      // Step 3: 更新每张图片的结果
+    try {
+      const result = await batchMixedMut.mutateAsync({ items: batchItems });
+
+      // Step 3: 更新每个文件的结果
       for (const r of result.results) {
-        const imageId = indexMap.get(r.index);
-        if (!imageId) continue;
-        setImages(prev => prev.map(img => img.id === imageId ? {
-          ...img,
+        const fileId = indexMap.get(r.index);
+        if (!fileId) continue;
+        setFiles(prev => prev.map(f => f.id === fileId ? {
+          ...f,
           status: r.status === "success" ? "success" : "error",
           extracted: r.extracted,
           rawAnswer: r.rawAnswer,
           errorMsg: r.errorMsg ?? r.extracted?.error,
-        } : img));
+          pdfInfo: r.pdfInfo,
+        } : f));
       }
 
-      toast.success(`批量提取完成！成功 ${result.successCount}/${result.total} 张`);
+      toast.success(`批量提取完成！成功 ${result.successCount}/${result.total} 个`);
     } catch (e: any) {
       toast.error(`批量提取失败: ${e.message}`);
-      // 将所有extracting状态的图片标记为error
-      setImages(prev => prev.map(img => img.status === "extracting" ? { ...img, status: "error", errorMsg: e.message } : img));
+      setFiles(prev => prev.map(f => f.status === "extracting" ? { ...f, status: "error", errorMsg: e.message } : f));
     } finally {
       setProcessing(false);
       setCurrentIndex(-1);
@@ -477,7 +585,7 @@ function BatchExtractPanel() {
   };
 
   const handleBatchImport = async () => {
-    const successItems = images.filter(i => i.status === "success" && i.extracted && !i.extracted.error && !i.imported);
+    const successItems = files.filter(i => i.status === "success" && i.extracted && !i.extracted.error && !i.imported);
     if (successItems.length === 0) { toast.info("没有可导入的记录"); return; }
 
     let importedCount = 0;
@@ -493,9 +601,9 @@ function BatchExtractPanel() {
           monthlyIncome: d.monthlyIncome ?? undefined,
           totalDebt: d.totalDebt ?? undefined,
           hasOverdue: d.hasOverdue ?? 0,
-          notes: `[AI批量提取]\n风险等级: ${d.riskLevel ?? "未知"}\n综合评价: ${d.summary ?? ""}\n贷款建议: ${d.suggestions ?? ""}\n贷款笔数: ${d.loanCount ?? 0}\n信用卡数: ${d.creditCardCount ?? 0}\n逾期次数: ${d.overdueCount ?? 0}\n逾期金额: ${d.overdueAmount ?? "0"}\n近期查询: ${d.queryCount ?? 0}次`,
+          notes: `[AI批量提取-${item.fileType === "pdf" ? "PDF" : "图片"}]\n风险等级: ${d.riskLevel ?? "未知"}\n综合评价: ${d.summary ?? ""}\n贷款建议: ${d.suggestions ?? ""}\n贷款笔数: ${d.loanCount ?? 0}\n信用卡数: ${d.creditCardCount ?? 0}\n逾期次数: ${d.overdueCount ?? 0}\n逾期金额: ${d.overdueAmount ?? "0"}\n近期查询: ${d.queryCount ?? 0}次`,
         });
-        setImages(prev => prev.map(img => img.id === item.id ? { ...img, imported: true } : img));
+        setFiles(prev => prev.map(f => f.id === item.id ? { ...f, imported: true } : f));
         importedCount++;
       } catch (e: any) {
         toast.error(`导入 ${item.extracted?.customerName ?? item.file.name} 失败: ${e.message}`);
@@ -504,7 +612,7 @@ function BatchExtractPanel() {
     toast.success(`成功导入 ${importedCount} 条征信记录到系统！`);
   };
 
-  const handleSingleImport = async (item: BatchImageItem) => {
+  const handleSingleImport = async (item: BatchFileItem) => {
     if (!item.extracted || item.extracted.error || item.imported) return;
     try {
       const d = item.extracted;
@@ -517,20 +625,22 @@ function BatchExtractPanel() {
         monthlyIncome: d.monthlyIncome ?? undefined,
         totalDebt: d.totalDebt ?? undefined,
         hasOverdue: d.hasOverdue ?? 0,
-        notes: `[AI批量提取]\n风险等级: ${d.riskLevel ?? "未知"}\n综合评价: ${d.summary ?? ""}\n贷款建议: ${d.suggestions ?? ""}`,
+        notes: `[AI批量提取-${item.fileType === "pdf" ? "PDF" : "图片"}]\n风险等级: ${d.riskLevel ?? "未知"}\n综合评价: ${d.summary ?? ""}\n贷款建议: ${d.suggestions ?? ""}`,
       });
-      setImages(prev => prev.map(img => img.id === item.id ? { ...img, imported: true } : img));
+      setFiles(prev => prev.map(f => f.id === item.id ? { ...f, imported: true } : f));
       toast.success(`${d.customerName ?? "客户"} 已导入征信系统`);
     } catch (e: any) {
       toast.error(`导入失败: ${e.message}`);
     }
   };
 
-  const successCount = images.filter(i => i.status === "success").length;
-  const errorCount = images.filter(i => i.status === "error").length;
-  const pendingCount = images.filter(i => i.status === "pending").length;
-  const importedCount = images.filter(i => i.imported).length;
-  const importableCount = images.filter(i => i.status === "success" && !i.imported && !i.extracted?.error).length;
+  const successCount = files.filter(i => i.status === "success").length;
+  const errorCount = files.filter(i => i.status === "error").length;
+  const pendingCount = files.filter(i => i.status === "pending").length;
+  const importedCount = files.filter(i => i.imported).length;
+  const importableCount = files.filter(i => i.status === "success" && !i.imported && !i.extracted?.error).length;
+  const imageFileCount = files.filter(i => i.fileType === "image").length;
+  const pdfFileCount = files.filter(i => i.fileType === "pdf").length;
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -543,10 +653,10 @@ function BatchExtractPanel() {
               批量上传征信报告
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              支持同时选择多张图片（最多20张），AI将逐张识别并提取关键信息。
+              支持 <span className="text-primary font-medium">图片</span> 和 <span className="text-blue-400 font-medium">PDF</span> 混合上传（最多20个文件），AI将逐个识别并提取关键信息。
             </p>
 
-            <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFilesSelect} className="hidden" />
+            <input ref={fileInputRef} type="file" accept={ACCEPTED_TYPES} multiple onChange={handleFilesSelect} className="hidden" />
 
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -554,23 +664,41 @@ function BatchExtractPanel() {
               className="w-full h-32 border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Upload className="w-6 h-6 text-muted-foreground/50" />
-              <span className="text-sm text-muted-foreground">点击选择多张图片</span>
-              <span className="text-xs text-muted-foreground/50">JPG / PNG，每张最大 10MB，最多 20 张</span>
+              <span className="text-sm text-muted-foreground">点击选择多个文件</span>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground/50">
+                <span className="flex items-center gap-1"><ImagePlus className="w-3 h-3" />图片</span>
+                <span className="text-muted-foreground/30">+</span>
+                <span className="flex items-center gap-1"><FileText className="w-3 h-3" />PDF</span>
+                <span className="text-muted-foreground/30">|</span>
+                <span>最多 20 个</span>
+              </div>
             </button>
 
-            {/* 图片预览网格 */}
-            {images.length > 0 && (
+            {/* 文件预览网格 */}
+            {files.length > 0 && (
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground">已选择 {images.length} 张图片</span>
+                  <span className="text-xs text-muted-foreground">
+                    已选择 {files.length} 个文件
+                    {imageFileCount > 0 && <span className="text-primary ml-1">({imageFileCount}图片</span>}
+                    {pdfFileCount > 0 && <span className="text-blue-400">{imageFileCount > 0 ? " + " : "("}{pdfFileCount}PDF</span>}
+                    {(imageFileCount > 0 || pdfFileCount > 0) && ")"}
+                  </span>
                   <button onClick={clearAll} disabled={processing} className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50">
                     清空全部
                   </button>
                 </div>
                 <div className="grid grid-cols-4 gap-2 max-h-[280px] overflow-y-auto pr-1">
-                  {images.map((item) => (
+                  {files.map((item) => (
                     <div key={item.id} className="relative group aspect-square rounded-lg overflow-hidden border border-border">
-                      <img src={item.preview} alt="" className="w-full h-full object-cover" />
+                      {item.fileType === "image" ? (
+                        <img src={item.preview} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-muted/20 gap-1">
+                          <FileText className="w-6 h-6 text-red-400" />
+                          <span className="text-[9px] text-muted-foreground text-center px-1 truncate w-full">{item.file.name}</span>
+                        </div>
+                      )}
                       {/* 状态覆盖层 */}
                       <div className={`absolute inset-0 flex items-center justify-center ${
                         item.status === "pending" ? "bg-transparent" :
@@ -583,10 +711,16 @@ function BatchExtractPanel() {
                         {item.status === "success" && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
                         {item.status === "error" && <XCircle className="w-5 h-5 text-red-400" />}
                       </div>
+                      {/* 文件类型标签 */}
+                      <div className={`absolute top-1 left-1 text-[9px] px-1 py-0.5 rounded ${
+                        item.fileType === "pdf" ? "bg-red-500/80 text-white" : "bg-blue-500/80 text-white"
+                      }`}>
+                        {item.fileType === "pdf" ? "PDF" : "IMG"}
+                      </div>
                       {/* 删除按钮 */}
                       {!processing && (
                         <button
-                          onClick={() => removeImage(item.id)}
+                          onClick={() => removeFile(item.id)}
                           className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <X className="w-3 h-3 text-white" />
@@ -608,25 +742,25 @@ function BatchExtractPanel() {
             <div className="flex gap-2 mt-4">
               <Button
                 onClick={handleBatchExtract}
-                disabled={images.length === 0 || processing || pendingCount === 0}
+                disabled={files.length === 0 || processing || pendingCount === 0}
                 className="flex-1"
               >
                 {processing ? (
-                  <><Loader2 className="w-4 h-4 animate-spin mr-2" />处理中 ({currentIndex + 1}/{images.filter(i => i.status !== "success").length})...</>
+                  <><Loader2 className="w-4 h-4 animate-spin mr-2" />处理中 ({currentIndex + 1}/{files.filter(i => i.status !== "success").length})...</>
                 ) : (
-                  <><FileSearch className="w-4 h-4 mr-2" />开始批量提取 ({pendingCount}张)</>
+                  <><FileSearch className="w-4 h-4 mr-2" />开始批量提取 ({pendingCount}个)</>
                 )}
               </Button>
             </div>
           </div>
 
           {/* 统计概览 */}
-          {images.length > 0 && (
+          {files.length > 0 && (
             <div className="glass-card rounded-xl p-4">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">处理统计</h4>
               <div className="grid grid-cols-4 gap-2">
                 <div className="text-center">
-                  <p className="text-lg font-bold text-foreground">{images.length}</p>
+                  <p className="text-lg font-bold text-foreground">{files.length}</p>
                   <p className="text-[10px] text-muted-foreground">总计</p>
                 </div>
                 <div className="text-center">
@@ -643,16 +777,16 @@ function BatchExtractPanel() {
                 </div>
               </div>
               {/* 进度条 */}
-              {images.length > 0 && (
+              {files.length > 0 && (
                 <div className="mt-3">
                   <div className="w-full h-2 bg-muted/50 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-500"
-                      style={{ width: `${((successCount + errorCount) / images.length) * 100}%` }}
+                      style={{ width: `${((successCount + errorCount) / files.length) * 100}%` }}
                     />
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1 text-right">
-                    {successCount + errorCount}/{images.length} 已处理
+                    {successCount + errorCount}/{files.length} 已处理
                   </p>
                 </div>
               )}
@@ -670,40 +804,55 @@ function BatchExtractPanel() {
 
         {/* 右侧：提取结果列表 (3/5) */}
         <div className="lg:col-span-3 flex flex-col gap-3 overflow-y-auto">
-          {images.length === 0 && (
+          {files.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <Layers className="w-12 h-12 text-muted-foreground/20 mb-4" />
               <h3 className="text-base font-semibold text-foreground mb-2">批量提取模式</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                选择多张征信报告图片，AI将逐张识别并提取关键信息，支持一键批量导入征信系统
+                选择多个征信报告文件（图片+PDF混合），AI将逐个识别并提取关键信息，支持一键批量导入征信系统
               </p>
             </div>
           )}
 
-          {images.filter(i => i.status !== "pending").length === 0 && images.length > 0 && !processing && (
+          {files.filter(i => i.status !== "pending").length === 0 && files.length > 0 && !processing && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <Upload className="w-12 h-12 text-muted-foreground/20 mb-4" />
               <h3 className="text-base font-semibold text-foreground mb-2">准备就绪</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                已选择 {images.length} 张图片，点击"开始批量提取"按钮开始处理
+                已选择 {files.length} 个文件，点击"开始批量提取"按钮开始处理
               </p>
             </div>
           )}
 
           {/* 结果卡片列表 */}
-          {images.filter(i => i.status !== "pending").map((item) => (
+          {files.filter(i => i.status !== "pending").map((item) => (
             <div key={item.id} className="glass-card rounded-xl overflow-hidden">
               {/* 卡片头部 */}
               <div
                 className="flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/10 transition-colors"
                 onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
               >
-                <img src={item.preview} alt="" className="w-12 h-12 rounded-lg object-cover border border-border flex-shrink-0" />
+                {/* 文件缩略图 */}
+                {item.fileType === "image" ? (
+                  <img src={item.preview} alt="" className="w-12 h-12 rounded-lg object-cover border border-border flex-shrink-0" />
+                ) : (
+                  <div className="w-12 h-12 rounded-lg border border-border flex-shrink-0 flex flex-col items-center justify-center bg-muted/20">
+                    <FileText className="w-5 h-5 text-red-400" />
+                    <span className="text-[8px] text-red-400 font-medium mt-0.5">PDF</span>
+                  </div>
+                )}
+
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-foreground truncate">
                       {item.extracted?.customerName ?? item.file.name}
                     </p>
+                    {/* 文件类型标签 */}
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
+                      item.fileType === "pdf" ? "text-red-400 bg-red-500/10 border-red-500/20" : "text-blue-400 bg-blue-500/10 border-blue-500/20"
+                    }`}>
+                      {item.fileType === "pdf" ? "PDF" : "图片"}
+                    </span>
                     {item.status === "success" && !item.extracted?.error && (
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${getGradeColor(item.extracted?.customerGrade)}`}>
                         {item.extracted?.customerGrade ?? "-"}级
@@ -711,13 +860,14 @@ function BatchExtractPanel() {
                     )}
                   </div>
                   <div className="flex items-center gap-3 mt-0.5">
-                    {item.status === "uploading" && <span className="text-xs text-blue-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />上传中</span>}
+                    {item.status === "uploading" && <span className="text-xs text-blue-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />{item.fileType === "pdf" ? "读取中" : "上传中"}</span>}
                     {item.status === "extracting" && <span className="text-xs text-purple-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />识别中</span>}
                     {item.status === "success" && !item.extracted?.error && (
                       <>
                         <span className="text-xs text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />提取成功</span>
                         {item.extracted?.riskLevel && <span className={`text-xs ${getRiskColor(item.extracted.riskLevel)}`}>{item.extracted.riskLevel}</span>}
                         {item.extracted?.creditScore && <span className="text-xs text-muted-foreground">评分: {item.extracted.creditScore}</span>}
+                        {item.pdfInfo && <span className="text-xs text-blue-400">{item.pdfInfo.pageCount}页</span>}
                       </>
                     )}
                     {item.status === "success" && item.extracted?.error && (
@@ -773,6 +923,13 @@ function BatchExtractPanel() {
                       <p className="text-sm font-bold text-foreground">{item.extracted.queryCount ?? 0}次</p>
                     </div>
                   </div>
+                  {/* PDF信息 */}
+                  {item.pdfInfo && (
+                    <div className="flex items-center gap-2 p-2 bg-blue-500/5 rounded-lg border border-blue-500/10">
+                      <FileText className="w-4 h-4 text-blue-400" />
+                      <span className="text-xs text-blue-400">PDF文档：{item.pdfInfo.pageCount}页，{item.pdfInfo.textLength.toLocaleString()}字</span>
+                    </div>
+                  )}
                   {/* 综合评价 */}
                   {item.extracted.summary && (
                     <div className="bg-muted/20 rounded-lg p-3">

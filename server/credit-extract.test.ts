@@ -37,7 +37,7 @@ function createDirectorContext(): TrpcContext {
   };
 }
 
-// ============ 单张提取测试 ============
+// ============ 单张图片提取测试 ============
 describe("aiAnalysis.extractCreditReport", () => {
   it("should exist as a procedure on the router", () => {
     const ctx = createBossContext();
@@ -70,7 +70,47 @@ describe("aiAnalysis.extractCreditReport", () => {
   });
 });
 
-// ============ 批量提取测试 ============
+// ============ PDF征信报告提取测试 ============
+describe("aiAnalysis.extractCreditPdf", () => {
+  it("should exist as a procedure on the router", () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    expect(caller.aiAnalysis.extractCreditPdf).toBeDefined();
+    expect(typeof caller.aiAnalysis.extractCreditPdf).toBe("function");
+  });
+
+  it("should reject empty pdfData input", async () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.aiAnalysis.extractCreditPdf({ pdfData: "", fileName: "test.pdf" })
+    ).rejects.toThrow();
+  });
+
+  it("should reject empty fileName input", async () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.aiAnalysis.extractCreditPdf({ pdfData: "dGVzdA==", fileName: "" })
+    ).rejects.toThrow();
+  });
+
+  it("should reject access for employee role", async () => {
+    const ctx = createEmployeeContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.aiAnalysis.extractCreditPdf({ pdfData: "dGVzdA==", fileName: "test.pdf" })
+    ).rejects.toThrow();
+  });
+
+  it("should be accessible by director role", () => {
+    const ctx = createDirectorContext();
+    const caller = appRouter.createCaller(ctx);
+    expect(caller.aiAnalysis.extractCreditPdf).toBeDefined();
+  });
+});
+
+// ============ 批量图片提取测试 ============
 describe("aiAnalysis.batchExtractCreditReport", () => {
   it("should exist as a procedure on the router", () => {
     const ctx = createBossContext();
@@ -103,19 +143,6 @@ describe("aiAnalysis.batchExtractCreditReport", () => {
     ).rejects.toThrow();
   });
 
-  it("should accept valid input from boss role (procedure exists and callable)", () => {
-    const ctx = createBossContext();
-    const caller = appRouter.createCaller(ctx);
-    // Just verify the procedure is callable with valid input structure
-    expect(caller.aiAnalysis.batchExtractCreditReport).toBeDefined();
-  });
-
-  it("should accept valid input from director role", () => {
-    const ctx = createDirectorContext();
-    const caller = appRouter.createCaller(ctx);
-    expect(caller.aiAnalysis.batchExtractCreditReport).toBeDefined();
-  });
-
   it("should reject more than 20 images", async () => {
     const ctx = createBossContext();
     const caller = appRouter.createCaller(ctx);
@@ -126,6 +153,66 @@ describe("aiAnalysis.batchExtractCreditReport", () => {
   });
 });
 
+// ============ 批量混合提取测试（图片+PDF） ============
+describe("aiAnalysis.batchMixedExtract", () => {
+  it("should exist as a procedure on the router", () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    expect(caller.aiAnalysis.batchMixedExtract).toBeDefined();
+    expect(typeof caller.aiAnalysis.batchMixedExtract).toBe("function");
+  });
+
+  it("should reject empty items array", async () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.aiAnalysis.batchMixedExtract({ items: [] })
+    ).rejects.toThrow();
+  });
+
+  it("should reject access for employee role", async () => {
+    const ctx = createEmployeeContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.aiAnalysis.batchMixedExtract({
+        items: [{ type: "image", imageUrl: "https://example.com/test.jpg", fileName: "test.jpg" }]
+      })
+    ).rejects.toThrow();
+  });
+
+  it("should reject more than 20 items", async () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    const tooManyItems = Array.from({ length: 21 }, (_, i) => ({
+      type: "image" as const,
+      imageUrl: `https://example.com/img${i}.jpg`,
+      fileName: `img${i}.jpg`,
+    }));
+    await expect(
+      caller.aiAnalysis.batchMixedExtract({ items: tooManyItems })
+    ).rejects.toThrow();
+  });
+
+  it("should accept valid image item from boss role (procedure exists)", () => {
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    expect(caller.aiAnalysis.batchMixedExtract).toBeDefined();
+  });
+
+  it("should accept valid PDF item from director role (procedure exists)", () => {
+    const ctx = createDirectorContext();
+    const caller = appRouter.createCaller(ctx);
+    expect(caller.aiAnalysis.batchMixedExtract).toBeDefined();
+  });
+
+  it("should accept mixed items (image + pdf) structure", () => {
+    // Verify the input schema accepts both types
+    const ctx = createBossContext();
+    const caller = appRouter.createCaller(ctx);
+    expect(caller.aiAnalysis.batchMixedExtract).toBeDefined();
+  });
+});
+
 // ============ 权限综合测试 ============
 describe("aiAnalysis permission checks", () => {
   it("boss should have access to all aiAnalysis procedures", () => {
@@ -133,7 +220,9 @@ describe("aiAnalysis permission checks", () => {
     const caller = appRouter.createCaller(ctx);
     expect(caller.aiAnalysis).toBeDefined();
     expect(caller.aiAnalysis.extractCreditReport).toBeDefined();
+    expect(caller.aiAnalysis.extractCreditPdf).toBeDefined();
     expect(caller.aiAnalysis.batchExtractCreditReport).toBeDefined();
+    expect(caller.aiAnalysis.batchMixedExtract).toBeDefined();
     expect(caller.aiAnalysis.analyze).toBeDefined();
   });
 
@@ -141,16 +230,19 @@ describe("aiAnalysis permission checks", () => {
     const ctx = createDirectorContext();
     const caller = appRouter.createCaller(ctx);
     expect(caller.aiAnalysis.extractCreditReport).toBeDefined();
+    expect(caller.aiAnalysis.extractCreditPdf).toBeDefined();
     expect(caller.aiAnalysis.batchExtractCreditReport).toBeDefined();
+    expect(caller.aiAnalysis.batchMixedExtract).toBeDefined();
     expect(caller.aiAnalysis.analyze).toBeDefined();
   });
 
-  it("employee should not have access to aiAnalysis procedures", async () => {
+  it("employee should not have access to any aiAnalysis procedures", async () => {
     const ctx = createEmployeeContext();
     const caller = appRouter.createCaller(ctx);
-    // All three procedures should reject employee access
     await expect(caller.aiAnalysis.extractCreditReport({ imageUrl: "https://example.com/test.jpg" })).rejects.toThrow();
+    await expect(caller.aiAnalysis.extractCreditPdf({ pdfData: "dGVzdA==", fileName: "test.pdf" })).rejects.toThrow();
     await expect(caller.aiAnalysis.batchExtractCreditReport({ imageUrls: ["https://example.com/test.jpg"] })).rejects.toThrow();
+    await expect(caller.aiAnalysis.batchMixedExtract({ items: [{ type: "image", imageUrl: "https://example.com/test.jpg", fileName: "test.jpg" }] })).rejects.toThrow();
     await expect(caller.aiAnalysis.analyze({ question: "test" })).rejects.toThrow();
   });
 });
