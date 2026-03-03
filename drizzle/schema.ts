@@ -1,22 +1,22 @@
-import { decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { bigint, decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
+// ============================================================
+// 用户表 - 6角色RBAC权限体系
+// ============================================================
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  phone: varchar("phone", { length: 20 }),
+  avatarUrl: text("avatarUrl"),
+  // 6角色: boss(老板), director(总监), shareholder(股东), leader(组长), finance(财务), employee(员工)
+  role: mysqlEnum("role", ["user", "admin", "boss", "director", "shareholder", "leader", "finance", "employee"]).default("employee").notNull(),
+  branchId: int("branchId"),
+  teamId: int("teamId"),
+  // 用于角色切换测试
+  simulatedRole: varchar("simulatedRole", { length: 32 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -25,85 +25,174 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// 贷款申请表
-export const loanApplications = mysqlTable("loan_applications", {
+// ============================================================
+// 分公司表
+// ============================================================
+export const branches = mysqlTable("branches", {
   id: int("id").autoincrement().primaryKey(),
-  applicantId: int("applicantId").notNull(),
-  applicantName: varchar("applicantName", { length: 128 }).notNull(),
-  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
-  purpose: varchar("purpose", { length: 512 }).notNull(),
-  loanType: mysqlEnum("loanType", [
-    "personal",
-    "business",
-    "mortgage",
-    "education",
-    "emergency",
-  ]).notNull(),
-  termMonths: int("termMonths").notNull(),
-  interestRate: decimal("interestRate", { precision: 5, scale: 2 }),
-  status: mysqlEnum("status", [
-    "draft",
-    "pending",
-    "under_review",
-    "approved",
-    "rejected",
-    "disbursed",
-    "repaying",
-    "completed",
-    "overdue",
-  ])
-    .default("pending")
-    .notNull(),
-  collateral: text("collateral"),
-  monthlyIncome: decimal("monthlyIncome", { precision: 15, scale: 2 }),
-  employmentStatus: varchar("employmentStatus", { length: 64 }),
-  notes: text("notes"),
-  attachmentUrls: text("attachmentUrls"),
+  name: varchar("name", { length: 128 }).notNull(),
+  address: text("address"),
+  phone: varchar("phone", { length: 20 }),
+  managerId: int("managerId"),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type LoanApplication = typeof loanApplications.$inferSelect;
-export type InsertLoanApplication = typeof loanApplications.$inferInsert;
+export type Branch = typeof branches.$inferSelect;
+export type InsertBranch = typeof branches.$inferInsert;
 
-// 审批记录表
-export const loanApprovals = mysqlTable("loan_approvals", {
+// ============================================================
+// 团队表
+// ============================================================
+export const teams = mysqlTable("teams", {
   id: int("id").autoincrement().primaryKey(),
-  loanId: int("loanId").notNull(),
-  reviewerId: int("reviewerId").notNull(),
-  reviewerName: varchar("reviewerName", { length: 128 }).notNull(),
-  action: mysqlEnum("action", [
-    "submit",
-    "approve",
-    "reject",
-    "request_info",
-    "disburse",
-  ]).notNull(),
-  comment: text("comment"),
-  previousStatus: varchar("previousStatus", { length: 32 }),
-  newStatus: varchar("newStatus", { length: 32 }),
+  name: varchar("name", { length: 128 }).notNull(),
+  branchId: int("branchId").notNull(),
+  leaderId: int("leaderId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type LoanApproval = typeof loanApprovals.$inferSelect;
-export type InsertLoanApproval = typeof loanApprovals.$inferInsert;
+export type Team = typeof teams.$inferSelect;
+export type InsertTeam = typeof teams.$inferInsert;
 
-// 还款记录表
-export const loanRepayments = mysqlTable("loan_repayments", {
+// ============================================================
+// 征信报告表
+// ============================================================
+export const creditReports = mysqlTable("credit_reports", {
   id: int("id").autoincrement().primaryKey(),
-  loanId: int("loanId").notNull(),
-  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
-  paymentDate: timestamp("paymentDate").notNull(),
-  paymentMethod: varchar("paymentMethod", { length: 64 }),
-  status: mysqlEnum("status", ["pending", "completed", "failed"]).default("completed").notNull(),
+  uploaderId: int("uploaderId").notNull(),
+  uploaderName: varchar("uploaderName", { length: 128 }),
+  customerName: varchar("customerName", { length: 128 }).notNull(),
+  customerPhone: varchar("customerPhone", { length: 20 }),
+  customerIdCard: varchar("customerIdCard", { length: 20 }),
+  creditScore: int("creditScore"),
+  // A/B/C/D 客户分类
+  customerGrade: mysqlEnum("customerGrade", ["A", "B", "C", "D"]).default("C").notNull(),
+  reportFileUrl: text("reportFileUrl"),
+  monthlyIncome: decimal("monthlyIncome", { precision: 15, scale: 2 }),
+  totalDebt: decimal("totalDebt", { precision: 15, scale: 2 }),
+  hasOverdue: int("hasOverdue").default(0).notNull(),
+  notes: text("notes"),
+  status: mysqlEnum("status", ["pending", "reviewed", "matched", "rejected"]).default("pending").notNull(),
+  branchId: int("branchId"),
+  teamId: int("teamId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CreditReport = typeof creditReports.$inferSelect;
+export type InsertCreditReport = typeof creditReports.$inferInsert;
+
+// ============================================================
+// 银行产品表
+// ============================================================
+export const bankProducts = mysqlTable("bank_products", {
+  id: int("id").autoincrement().primaryKey(),
+  bankName: varchar("bankName", { length: 128 }).notNull(),
+  productName: varchar("productName", { length: 256 }).notNull(),
+  productType: mysqlEnum("productType", ["mortgage", "business", "personal", "credit_card", "car_loan"]).notNull(),
+  minAmount: decimal("minAmount", { precision: 15, scale: 2 }),
+  maxAmount: decimal("maxAmount", { precision: 15, scale: 2 }),
+  interestRateMin: decimal("interestRateMin", { precision: 5, scale: 2 }),
+  interestRateMax: decimal("interestRateMax", { precision: 5, scale: 2 }),
+  termMin: int("termMin"),
+  termMax: int("termMax"),
+  requirements: text("requirements"),
+  minCreditScore: int("minCreditScore"),
+  features: text("features"),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BankProduct = typeof bankProducts.$inferSelect;
+export type InsertBankProduct = typeof bankProducts.$inferInsert;
+
+// ============================================================
+// 客户-银行产品匹配记录表
+// ============================================================
+export const matchRecords = mysqlTable("match_records", {
+  id: int("id").autoincrement().primaryKey(),
+  creditReportId: int("creditReportId").notNull(),
+  bankProductId: int("bankProductId").notNull(),
+  matchScore: int("matchScore"),
+  matchedBy: int("matchedBy"),
+  status: mysqlEnum("status", ["pending", "accepted", "rejected", "applied"]).default("pending").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
-export type LoanRepayment = typeof loanRepayments.$inferSelect;
-export type InsertLoanRepayment = typeof loanRepayments.$inferInsert;
+export type MatchRecord = typeof matchRecords.$inferSelect;
+export type InsertMatchRecord = typeof matchRecords.$inferInsert;
 
+// ============================================================
+// 放款记录表
+// ============================================================
+export const disbursements = mysqlTable("disbursements", {
+  id: int("id").autoincrement().primaryKey(),
+  creditReportId: int("creditReportId"),
+  bankProductId: int("bankProductId"),
+  customerName: varchar("customerName", { length: 128 }).notNull(),
+  bankName: varchar("bankName", { length: 128 }),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  commission: decimal("commission", { precision: 15, scale: 2 }),
+  employeeId: int("employeeId").notNull(),
+  employeeName: varchar("employeeName", { length: 128 }),
+  branchId: int("branchId"),
+  teamId: int("teamId"),
+  status: mysqlEnum("status", ["pending", "approved", "disbursed", "completed", "cancelled"]).default("pending").notNull(),
+  disbursedAt: timestamp("disbursedAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Disbursement = typeof disbursements.$inferSelect;
+export type InsertDisbursement = typeof disbursements.$inferInsert;
+
+// ============================================================
+// 每日统计表
+// ============================================================
+export const dailyStats = mysqlTable("daily_stats", {
+  id: int("id").autoincrement().primaryKey(),
+  date: varchar("date", { length: 10 }).notNull(), // YYYY-MM-DD
+  branchId: int("branchId"),
+  teamId: int("teamId"),
+  newCreditReports: int("newCreditReports").default(0).notNull(),
+  newCustomersA: int("newCustomersA").default(0).notNull(),
+  newCustomersB: int("newCustomersB").default(0).notNull(),
+  newCustomersC: int("newCustomersC").default(0).notNull(),
+  newDisbursements: int("newDisbursements").default(0).notNull(),
+  disbursementAmount: decimal("disbursementAmount", { precision: 15, scale: 2 }).default("0").notNull(),
+  commissionAmount: decimal("commissionAmount", { precision: 15, scale: 2 }).default("0").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DailyStat = typeof dailyStats.$inferSelect;
+export type InsertDailyStat = typeof dailyStats.$inferInsert;
+
+// ============================================================
+// 操作日志表
+// ============================================================
+export const operationLogs = mysqlTable("operation_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  userName: varchar("userName", { length: 128 }),
+  action: varchar("action", { length: 64 }).notNull(),
+  module: varchar("module", { length: 64 }).notNull(),
+  detail: text("detail"),
+  ip: varchar("ip", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type OperationLog = typeof operationLogs.$inferSelect;
+export type InsertOperationLog = typeof operationLogs.$inferInsert;
+
+// ============================================================
 // 系统通知表
+// ============================================================
 export const notifications = mysqlTable("notifications", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
@@ -111,24 +200,26 @@ export const notifications = mysqlTable("notifications", {
   content: text("content").notNull(),
   type: mysqlEnum("type", ["info", "success", "warning", "error"]).default("info").notNull(),
   isRead: int("isRead").default(0).notNull(),
-  relatedLoanId: int("relatedLoanId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = typeof notifications.$inferInsert;
 
+// ============================================================
 // AI视频任务表
+// ============================================================
 export const aiVideoTasks = mysqlTable("ai_video_tasks", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
+  title: varchar("title", { length: 256 }),
   taskId: varchar("taskId", { length: 128 }),
   prompt: text("prompt").notNull(),
   imageUrl: text("imageUrl"),
+  avatarUrl: text("avatarUrl"),
+  voiceUrl: text("voiceUrl"),
   videoUrl: text("videoUrl"),
-  status: mysqlEnum("status", ["pending", "processing", "completed", "failed"])
-    .default("pending")
-    .notNull(),
+  status: mysqlEnum("status", ["pending", "processing", "completed", "failed"]).default("pending").notNull(),
   errorMessage: text("errorMessage"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

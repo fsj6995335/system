@@ -1,0 +1,9 @@
+{
+  "query": "DROP TABLE IF EXISTS users;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3hs2ws7rPcVHVUf.root --database 9LHz3gWCR5n3Gi8m5TsHdh --execute DROP TABLE IF EXISTS users;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1797
+}

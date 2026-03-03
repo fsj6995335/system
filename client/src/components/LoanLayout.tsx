@@ -1,45 +1,64 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
+import { SYSTEM_ROLES, ROLE_PERMISSIONS, hasPermission, getEffectiveRole, type SystemRole } from "../../../shared/permissions";
 import {
-  BarChart3,
-  Bell,
-  Bot,
-  ChevronRight,
-  FileText,
-  Home,
-  LogOut,
-  Menu,
-  Shield,
-  Users,
-  Video,
-  X,
+  BarChart3, Bell, Bot, Building2, ChevronRight, ClipboardList, CreditCard,
+  FileText, Home, LayoutDashboard, LogOut, Menu, Monitor, ScrollText,
+  Settings, Shield, Trophy, Users, Video, X, RefreshCw,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 
 interface NavItem {
   icon: React.ElementType;
   label: string;
   path: string;
-  adminOnly?: boolean;
+  permission?: string;
+  divider?: boolean;
+  section?: string;
 }
 
-const navItems: NavItem[] = [
-  { icon: Home, label: "仪表板", path: "/dashboard" },
-  { icon: FileText, label: "贷款申请", path: "/loans" },
-  { icon: Shield, label: "审批管理", path: "/approvals", adminOnly: true },
-  { icon: BarChart3, label: "数据统计", path: "/stats" },
-  { icon: Video, label: "AI视频生成", path: "/ai-video" },
-  { icon: Bot, label: "AI智能分析", path: "/ai-analysis" },
-  { icon: Bell, label: "消息通知", path: "/notifications" },
-  { icon: Users, label: "用户管理", path: "/users", adminOnly: true },
+const allNavItems: NavItem[] = [
+  { icon: Home, label: "首页", path: "/home", section: "概览" },
+  { icon: Monitor, label: "数据大屏", path: "/data-screen", permission: "view_data_screen", section: "概览" },
+  { icon: FileText, label: "征信上传", path: "/credit-reports", permission: "view_credit_reports", section: "业务管理" },
+  { icon: Users, label: "客户列表", path: "/customers", permission: "view_customers", section: "业务管理" },
+  { icon: CreditCard, label: "银行产品", path: "/bank-products", permission: "view_bank_products", section: "业务管理" },
+  { icon: ClipboardList, label: "放款管理", path: "/disbursements", permission: "view_disbursements", section: "业务管理" },
+  { icon: Trophy, label: "排名榜单", path: "/rankings", permission: "view_rankings", section: "业务管理" },
+  { icon: BarChart3, label: "AI分析", path: "/ai-analysis", permission: "view_ai_analysis", section: "AI功能" },
+  { icon: Bot, label: "AI助手", path: "/ai-assistant", permission: "use_ai_assistant", section: "AI功能" },
+  { icon: Video, label: "AI视频工作室", path: "/ai-video", permission: "use_ai_video", section: "AI功能" },
+  { icon: Building2, label: "分公司管理", path: "/branches", permission: "manage_branches", section: "系统管理" },
+  { icon: Users, label: "员工管理", path: "/employees", permission: "manage_employees", section: "系统管理" },
+  { icon: Settings, label: "系统设置", path: "/settings", permission: "system_settings", section: "系统管理" },
+  { icon: ScrollText, label: "操作日志", path: "/operation-logs", permission: "view_operation_logs", section: "系统管理" },
 ];
+
+function getRoleBadge(role: string) {
+  const map: Record<string, { label: string; color: string }> = {
+    boss: { label: "老板", color: "bg-amber-500/20 text-amber-400" },
+    director: { label: "总监", color: "bg-blue-500/20 text-blue-400" },
+    shareholder: { label: "股东", color: "bg-purple-500/20 text-purple-400" },
+    leader: { label: "组长", color: "bg-green-500/20 text-green-400" },
+    finance: { label: "财务", color: "bg-cyan-500/20 text-cyan-400" },
+    employee: { label: "员工", color: "bg-gray-500/20 text-gray-400" },
+    admin: { label: "管理员", color: "bg-red-500/20 text-red-400" },
+    user: { label: "用户", color: "bg-gray-500/20 text-gray-400" },
+  };
+  return map[role] ?? { label: role, color: "bg-gray-500/20 text-gray-400" };
+}
 
 export default function LoanLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, isAuthenticated, logout } = useAuth();
   const [location] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+
+  const switchRole = trpc.auth.switchRole.useMutation({
+    onSuccess: () => window.location.reload(),
+  });
 
   const { data: notifications } = trpc.notifications.list.useQuery(undefined, {
     enabled: isAuthenticated,
@@ -47,12 +66,24 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
   });
   const unreadCount = notifications?.filter((n) => !n.isRead).length ?? 0;
 
+  const effectiveRole = useMemo(() => {
+    if (!user) return "employee" as SystemRole;
+    return getEffectiveRole(user as any);
+  }, [user]);
+
+  const visibleNavItems = useMemo(() => {
+    return allNavItems.filter((item) => {
+      if (!item.permission) return true;
+      return hasPermission(effectiveRole, item.permission as any);
+    });
+  }, [effectiveRole]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          <p className="text-muted-foreground text-sm">加载中...</p>
+          <p className="text-muted-foreground text-sm">系统加载中...</p>
         </div>
       </div>
     );
@@ -62,104 +93,148 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-6 max-w-sm mx-auto px-4">
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
-            <Shield className="w-8 h-8 text-primary" />
+          <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto elegant-shadow">
+            <Shield className="w-10 h-10 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground mb-2">内部贷款管理系统</h1>
+            <h1 className="text-2xl font-bold gradient-text mb-2">内部贷款管理系统</h1>
             <p className="text-muted-foreground text-sm">请登录以访问系统</p>
           </div>
           <a
             href={getLoginUrl()}
-            className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-6 py-3 rounded-xl font-medium hover:bg-primary/90 transition-colors"
+            className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-8 py-3 rounded-xl font-medium hover:bg-primary/90 transition-all elegant-shadow"
           >
-            登录系统
-            <ChevronRight className="w-4 h-4" />
+            登录系统 <ChevronRight className="w-4 h-4" />
           </a>
         </div>
       </div>
     );
   }
 
-  const visibleNavItems = navItems.filter((item) => !item.adminOnly || user?.role === "admin");
+  const badge = getRoleBadge(effectiveRole);
 
-  const SidebarContent = () => (
-    <div className="flex flex-col h-full">
-      {/* Logo */}
-      <div className="px-4 py-6 border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
-            <BarChart3 className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold text-sidebar-foreground leading-tight">贷款管理系统</h1>
-            <p className="text-xs text-sidebar-foreground/50 mt-0.5">内部管理平台</p>
+  const SidebarContent = () => {
+    let lastSection = "";
+    return (
+      <div className="flex flex-col h-full">
+        {/* Logo */}
+        <div className="px-4 py-5 border-b border-sidebar-border">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
+              <LayoutDashboard className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-sidebar-foreground leading-tight">贷款管理系统</h1>
+              <p className="text-[10px] text-sidebar-foreground/40 mt-0.5">内部管理平台 v2.0</p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {visibleNavItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
-          return (
-            <Link key={item.path} href={item.path} onClick={() => setSidebarOpen(false)}>
-              <div className={`sidebar-item ${isActive ? "sidebar-item-active" : "sidebar-item-inactive"}`}>
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                <span className="flex-1">{item.label}</span>
-                {item.label === "消息通知" && unreadCount > 0 && (
-                  <span className="bg-primary text-primary-foreground text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
+        {/* Navigation */}
+        <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-0.5">
+          {visibleNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
+            const showSection = item.section && item.section !== lastSection;
+            if (showSection) lastSection = item.section!;
+            return (
+              <div key={item.path}>
+                {showSection && (
+                  <div className="px-3 pt-4 pb-1.5 text-[10px] font-semibold text-sidebar-foreground/30 uppercase tracking-wider">
+                    {item.section}
+                  </div>
                 )}
+                <Link href={item.path} onClick={() => setSidebarOpen(false)}>
+                  <div className={`sidebar-item ${isActive ? "sidebar-item-active" : "sidebar-item-inactive hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"}`}>
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span className="flex-1 text-[13px]">{item.label}</span>
+                    {item.label === "消息通知" && unreadCount > 0 && (
+                      <span className="bg-primary text-primary-foreground text-[10px] rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center font-medium">
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </span>
+                    )}
+                  </div>
+                </Link>
               </div>
-            </Link>
-          );
-        })}
-      </nav>
+            );
+          })}
+        </nav>
 
-      {/* User Profile */}
-      <div className="px-3 py-4 border-t border-sidebar-border">
-        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-sidebar-accent/50">
-          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-            <span className="text-xs font-semibold text-primary">
-              {user?.name?.charAt(0)?.toUpperCase() ?? "U"}
-            </span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-sidebar-foreground truncate">{user?.name ?? "用户"}</p>
-            <p className="text-xs text-sidebar-foreground/50">
-              {user?.role === "admin" ? "管理员" : "普通用户"}
-            </p>
-          </div>
+        {/* Role Switcher */}
+        <div className="px-3 py-2 border-t border-sidebar-border">
           <button
-            onClick={logout}
-            className="p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
-            title="退出登录"
+            onClick={() => setRoleMenuOpen(!roleMenuOpen)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors"
           >
-            <LogOut className="w-3.5 h-3.5" />
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>角色切换</span>
+            <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.color}`}>{badge.label}</span>
           </button>
+          {roleMenuOpen && (
+            <div className="mt-1 p-1 rounded-lg bg-sidebar-accent/30 space-y-0.5">
+              {SYSTEM_ROLES.map((r) => (
+                <button
+                  key={r.value}
+                  onClick={() => { switchRole.mutate({ role: r.value }); setRoleMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-1.5 rounded text-xs transition-colors ${
+                    effectiveRole === r.value ? "bg-primary/15 text-primary" : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50"
+                  }`}
+                >
+                  {r.label} <span className="text-sidebar-foreground/30 ml-1">- {r.description}</span>
+                </button>
+              ))}
+              <button
+                onClick={() => { switchRole.mutate({ role: "" }); setRoleMenuOpen(false); }}
+                className="w-full text-left px-3 py-1.5 rounded text-xs text-sidebar-foreground/50 hover:bg-sidebar-accent/50"
+              >
+                恢复原始角色
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* User Profile */}
+        <div className="px-3 py-3 border-t border-sidebar-border">
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-sidebar-accent/30">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+              <span className="text-xs font-semibold text-primary">
+                {user?.name?.charAt(0)?.toUpperCase() ?? "U"}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-sidebar-foreground truncate">{user?.name ?? "用户"}</p>
+              <p className="text-[10px] text-sidebar-foreground/40 mt-0.5">
+                <span className={`px-1 py-0.5 rounded ${badge.color}`}>{badge.label}</span>
+              </p>
+            </div>
+            <button
+              onClick={logout}
+              className="p-1.5 rounded-md text-sidebar-foreground/40 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+              title="退出登录"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex w-60 flex-col bg-sidebar border-r border-sidebar-border flex-shrink-0">
+      <aside className="hidden lg:flex w-60 flex-col bg-sidebar border-r border-sidebar-border flex-shrink-0 sticky top-0 h-screen">
         <SidebarContent />
       </aside>
 
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
-          <div className="fixed inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
-          <aside className="relative w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+          <aside className="relative w-64 bg-sidebar border-r border-sidebar-border flex flex-col z-50">
             <button
               onClick={() => setSidebarOpen(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground"
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground z-10"
             >
               <X className="w-5 h-5" />
             </button>
@@ -171,7 +246,7 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile Header */}
-        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
+        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
           <button
             onClick={() => setSidebarOpen(true)}
             className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -193,7 +268,7 @@ export default function LoanLayout({ children }: { children: React.ReactNode }) 
 
         {/* Page Content */}
         <main className="flex-1 overflow-auto">
-          <div className="p-6 lg:p-8">{children}</div>
+          <div className="p-4 lg:p-6">{children}</div>
         </main>
       </div>
     </div>

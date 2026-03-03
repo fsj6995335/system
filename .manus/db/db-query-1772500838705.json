@@ -1,0 +1,9 @@
+{
+  "query": "SET FOREIGN_KEY_CHECKS = 0;\nDROP TABLE IF EXISTS ai_video_tasks;\nDROP TABLE IF EXISTS bank_products;\nDROP TABLE IF EXISTS branches;\nDROP TABLE IF EXISTS credit_reports;\nDROP TABLE IF EXISTS daily_stats;\nDROP TABLE IF EXISTS disbursements;\nDROP TABLE IF EXISTS match_records;\nDROP TABLE IF EXISTS notifications;\nDROP TABLE IF EXISTS operation_logs;\nDROP TABLE IF EXISTS teams;\nDROP TABLE IF EXISTS users;\nSET FOREIGN_KEY_CHECKS = 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3hs2ws7rPcVHVUf.root --database 9LHz3gWCR5n3Gi8m5TsHdh --execute SET FOREIGN_KEY_CHECKS = 0;\nDROP TABLE IF EXISTS ai_video_tasks;\nDROP TABLE IF EXISTS bank_products;\nDROP TABLE IF EXISTS branches;\nDROP TABLE IF EXISTS credit_reports;\nDROP TABLE IF EXISTS daily_stats;\nDROP TABLE IF EXISTS disbursements;\nDROP TABLE IF EXISTS match_records;\nDROP TABLE IF EXISTS notifications;\nDROP TABLE IF EXISTS operation_logs;\nDROP TABLE IF EXISTS teams;\nDROP TABLE IF EXISTS users;\nSET FOREIGN_KEY_CHECKS = 1;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 5718
+}

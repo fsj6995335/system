@@ -1,234 +1,133 @@
 import { trpc } from "@/lib/trpc";
-import { formatCurrency, getLoanStatusBadge, LOAN_TYPE_MAP } from "@/lib/loanUtils";
-import { Bot, Loader2, Send, Sparkles, AlertCircle } from "lucide-react";
-import { useState, useEffect } from "react";
-import { useSearch } from "wouter";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { getEffectiveRole, hasPermission } from "../../../shared/permissions";
+import { Brain, Send, Loader2, ShieldAlert, Sparkles, Bot } from "lucide-react";
 import { Streamdown } from "streamdown";
-import { toast } from "sonner";
 
-const QUICK_QUESTIONS = [
-  "请对这笔贷款进行综合风险评估",
-  "申请人的还款能力如何？",
-  "这笔贷款的利率建议是多少？",
-  "是否存在潜在的违约风险？",
-  "请给出审批建议",
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+const QUICK_PROMPTS = [
+  "分析本月各团队业绩表现，找出最佳和最差团队",
+  "根据当前放款数据，预测下月业绩趋势",
+  "分析各等级客户的转化率，给出优化建议",
+  "对比各分公司的运营效率，提出改进方案",
 ];
 
 export default function AiAnalysis() {
-  const search = useSearch();
-  const params = new URLSearchParams(search);
-  const loanIdParam = params.get("loanId");
+  const { user } = useAuth();
+  const role = useMemo(() => getEffectiveRole(user as any), [user]);
+  const canAccess = hasPermission(role, "view_ai_analysis");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const analyzeMut = trpc.aiAnalysis.analyze.useMutation();
 
-  const [selectedLoanId, setSelectedLoanId] = useState<number | undefined>(
-    loanIdParam ? parseInt(loanIdParam) : undefined
-  );
-  const [question, setQuestion] = useState("");
-  const [context, setContext] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [chatHistory, setChatHistory] = useState<Array<{ role: "user" | "ai"; content: string }>>([]);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages]);
 
-  const { data: loans } = trpc.loans.list.useQuery({ pageSize: 100, myOnly: false });
+  if (!canAccess) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+        <ShieldAlert className="w-16 h-16 text-muted-foreground/30 mb-4" />
+        <h2 className="text-xl font-semibold text-foreground mb-2">权限不足</h2>
+        <p className="text-muted-foreground">AI分析功能仅对老板和总监角色开放</p>
+      </div>
+    );
+  }
 
-  const analyzeMutation = trpc.aiAnalysis.analyze.useMutation({
-    onSuccess: (data) => {
-      const userMsg = question;
-      setAnswer(data.answer);
-      setChatHistory((prev) => [
-        ...prev,
-        { role: "user", content: userMsg },
-        { role: "ai", content: data.answer },
-      ]);
-      setQuestion("");
-    },
-    onError: (err) => toast.error(`分析失败：${err.message}`),
-  });
-
-  const handleSubmit = () => {
-    if (!question.trim()) {
-      toast.error("请输入分析问题");
-      return;
-    }
-    analyzeMutation.mutate({
-      loanId: selectedLoanId,
-      question,
-      context: context || undefined,
-    });
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      handleSubmit();
+  const handleSend = async (text?: string) => {
+    const msg = text ?? input.trim();
+    if (!msg || loading) return;
+    setInput("");
+    const newMessages: ChatMessage[] = [...messages, { role: "user", content: msg }];
+    setMessages(newMessages);
+    setLoading(true);
+    try {
+      const result = await analyzeMut.mutateAsync({ question: msg });
+      setMessages([...newMessages, { role: "assistant", content: result.answer }]);
+    } catch (e: any) {
+      setMessages([...newMessages, { role: "assistant", content: `分析失败: ${e.message}` }]);
+    } finally {
+      setLoading(false);
     }
   };
-
-  const selectedLoan = loans?.items?.find((l) => l.id === selectedLoanId);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="page-title">AI智能分析</h1>
-        <p className="page-subtitle">使用豆包AI对贷款申请进行智能风险分析</p>
+    <div className="flex flex-col h-[calc(100vh-8rem)]">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center">
+          <Brain className="w-5 h-5 text-purple-400" />
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-foreground">AI 智能分析</h1>
+          <p className="text-xs text-muted-foreground">基于豆包大模型的业务数据深度分析 · doubao-seed-2-0-pro-260215</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Config Panel */}
-        <div className="space-y-4">
-          {/* Loan Selector */}
-          <div className="glass-card rounded-xl p-5 elegant-shadow space-y-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">选择分析对象</h3>
-            </div>
-            <select
-              value={selectedLoanId ?? ""}
-              onChange={(e) => setSelectedLoanId(e.target.value ? parseInt(e.target.value) : undefined)}
-              className="w-full px-3 py-2.5 bg-input border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/50 focus:border-primary/50 transition-all"
-            >
-              <option value="">通用分析（不关联贷款）</option>
-              {loans?.items?.map((loan) => (
-                <option key={loan.id} value={loan.id}>
-                  #{loan.id} {loan.applicantName} - {formatCurrency(loan.amount)}
-                </option>
-              ))}
-            </select>
-
-            {selectedLoan && (
-              <div className="p-3 rounded-lg bg-muted/30 space-y-2">
-                {[
-                  { label: "申请人", value: selectedLoan.applicantName },
-                  { label: "金额", value: formatCurrency(selectedLoan.amount) },
-                  { label: "类型", value: LOAN_TYPE_MAP[selectedLoan.loanType] ?? selectedLoan.loanType },
-                  { label: "状态", value: getLoanStatusBadge(selectedLoan.status ?? "").label },
-                ].map(({ label, value }) => (
-                  <div key={label} className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">{label}</span>
-                    <span className="text-foreground font-medium">{value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Context */}
-          <div className="glass-card rounded-xl p-5 elegant-shadow space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">补充背景信息</h3>
-            <textarea
-              value={context}
-              onChange={(e) => setContext(e.target.value)}
-              placeholder="可以补充额外的背景信息，如市场情况、行业背景等..."
-              rows={4}
-              className="w-full px-3 py-2.5 bg-input border border-border rounded-lg text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/50 focus:border-primary/50 transition-all resize-none"
-            />
-          </div>
-
-          {/* Quick Questions */}
-          <div className="glass-card rounded-xl p-5 elegant-shadow space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">快速问题</h3>
-            <div className="space-y-1.5">
-              {QUICK_QUESTIONS.map((q) => (
-                <button
-                  key={q}
-                  onClick={() => setQuestion(q)}
-                  className="w-full text-left text-xs text-muted-foreground hover:text-foreground p-2.5 rounded-lg hover:bg-muted/30 transition-colors border border-transparent hover:border-border"
-                >
-                  {q}
+      {/* Chat Area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 pr-2">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center">
+            <Sparkles className="w-12 h-12 text-primary/30 mb-4" />
+            <h3 className="text-lg font-semibold text-foreground mb-2">开始智能分析</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-md">选择一个快捷问题或输入您的分析需求</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg">
+              {QUICK_PROMPTS.map((p, i) => (
+                <button key={i} onClick={() => handleSend(p)} className="glass-card rounded-lg p-3 text-left text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+                  {p}
                 </button>
               ))}
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Chat Panel */}
-        <div className="xl:col-span-2 glass-card rounded-xl elegant-shadow flex flex-col" style={{ minHeight: "600px" }}>
-          {/* Chat History */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {chatHistory.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-                  <Bot className="w-8 h-8 text-primary" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-1">豆包AI分析助手</h3>
-                  <p className="text-xs text-muted-foreground max-w-xs">
-                    选择一笔贷款申请，然后提出您的问题。AI将基于贷款数据提供专业的风险分析和建议。
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 gap-2 w-full max-w-xs">
-                  {QUICK_QUESTIONS.slice(0, 3).map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => setQuestion(q)}
-                      className="text-xs text-primary hover:text-primary/80 p-2 rounded-lg border border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all text-left"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              chatHistory.map((msg, i) => (
-                <div key={i} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === "ai" ? "bg-primary/10" : "bg-muted"}`}>
-                    {msg.role === "ai" ? (
-                      <Bot className="w-3.5 h-3.5 text-primary" />
-                    ) : (
-                      <span className="text-xs text-muted-foreground">我</span>
-                    )}
-                  </div>
-                  <div className={`flex-1 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
-                    <div className={`rounded-xl px-4 py-3 text-sm ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted/40 text-foreground"}`}>
-                      {msg.role === "ai" ? (
-                        <Streamdown className="prose prose-sm prose-invert max-w-none text-foreground [&_*]:text-foreground">{msg.content}</Streamdown>
-                      ) : (
-                        msg.content
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-            {analyzeMutation.isPending && (
-              <div className="flex gap-3">
-                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-3.5 h-3.5 text-primary" />
-                </div>
-                <div className="bg-muted/40 rounded-xl px-4 py-3 flex items-center gap-2">
-                  <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
-                  <span className="text-xs text-muted-foreground">AI正在分析中...</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Input */}
-          <div className="border-t border-border p-4">
-            <div className="flex gap-3">
-              <textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="输入您的问题... (Ctrl+Enter 发送)"
-                rows={2}
-                className="flex-1 px-3 py-2.5 bg-input border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/50 focus:border-primary/50 transition-all resize-none"
-              />
-              <button
-                onClick={handleSubmit}
-                disabled={analyzeMutation.isPending || !question.trim()}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-all elegant-shadow flex-shrink-0 self-end"
-              >
-                {analyzeMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
-              </button>
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === "assistant" ? "bg-primary/10" : "bg-muted"}`}>
+              {msg.role === "assistant" ? <Bot className="w-4 h-4 text-primary" /> : <span className="text-xs text-muted-foreground">我</span>}
             </div>
-            <p className="text-xs text-muted-foreground/60 mt-2">
-              模型：doubao-seed-2-0-pro-260215 · 按 Ctrl+Enter 快速发送
-            </p>
+            <div className={`max-w-[80%] rounded-xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground" : "glass-card"}`}>
+              {msg.role === "assistant" ? (
+                <div className="prose prose-invert prose-sm max-w-none"><Streamdown>{msg.content}</Streamdown></div>
+              ) : (
+                <p className="text-sm">{msg.content}</p>
+              )}
+            </div>
           </div>
-        </div>
+        ))}
+
+        {loading && (
+          <div className="flex gap-3">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Bot className="w-4 h-4 text-primary" />
+            </div>
+            <div className="glass-card rounded-xl px-4 py-3 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              <span className="text-sm text-muted-foreground">正在分析...</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="mt-4 flex gap-2">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+          placeholder="输入分析需求..."
+          className="flex-1 bg-muted/50 border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+        />
+        <Button onClick={() => handleSend()} disabled={!input.trim() || loading} size="icon" className="h-auto w-12 rounded-xl">
+          <Send className="w-4 h-4" />
+        </Button>
       </div>
     </div>
   );

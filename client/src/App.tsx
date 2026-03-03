@@ -5,51 +5,65 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import LoanLayout from "./components/LoanLayout";
-import Home from "./pages/Home";
-import Dashboard from "./pages/Dashboard";
-import LoanList from "./pages/LoanList";
-import LoanForm from "./pages/LoanForm";
-import LoanDetail from "./pages/LoanDetail";
-import Approvals from "./pages/Approvals";
-import Stats from "./pages/Stats";
-import AiVideo from "./pages/AiVideo";
+import HomePage from "./pages/HomePage";
+import DataScreen from "./pages/DataScreen";
+import CreditReports from "./pages/CreditReports";
+import Customers from "./pages/Customers";
+import BankProducts from "./pages/BankProducts";
+import Disbursements from "./pages/Disbursements";
+import Rankings from "./pages/Rankings";
 import AiAnalysis from "./pages/AiAnalysis";
-import Notifications from "./pages/Notifications";
-import Users from "./pages/Users";
+import AiAssistant from "./pages/AiAssistant";
+import AiVideo from "./pages/AiVideo";
+import Branches from "./pages/Branches";
+import Employees from "./pages/Employees";
+import Settings from "./pages/Settings";
+import AuditLogs from "./pages/AuditLogs";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/dashboard">
-        <LoanLayout><Dashboard /></LoanLayout>
+      <Route path="/">
+        <LoanLayout><HomePage /></LoanLayout>
       </Route>
-      <Route path="/loans/new">
-        <LoanLayout><LoanForm /></LoanLayout>
+      <Route path="/data-screen">
+        <LoanLayout><DataScreen /></LoanLayout>
       </Route>
-      <Route path="/loans/:id">
-        <LoanLayout><LoanDetail /></LoanLayout>
+      <Route path="/credit-reports">
+        <LoanLayout><CreditReports /></LoanLayout>
       </Route>
-      <Route path="/loans">
-        <LoanLayout><LoanList /></LoanLayout>
+      <Route path="/customers">
+        <LoanLayout><Customers /></LoanLayout>
       </Route>
-      <Route path="/approvals">
-        <LoanLayout><Approvals /></LoanLayout>
+      <Route path="/bank-products">
+        <LoanLayout><BankProducts /></LoanLayout>
       </Route>
-      <Route path="/stats">
-        <LoanLayout><Stats /></LoanLayout>
+      <Route path="/disbursements">
+        <LoanLayout><Disbursements /></LoanLayout>
       </Route>
-      <Route path="/ai-video">
-        <LoanLayout><AiVideo /></LoanLayout>
+      <Route path="/rankings">
+        <LoanLayout><Rankings /></LoanLayout>
       </Route>
       <Route path="/ai-analysis">
         <LoanLayout><AiAnalysis /></LoanLayout>
       </Route>
-      <Route path="/notifications">
-        <LoanLayout><Notifications /></LoanLayout>
+      <Route path="/ai-assistant">
+        <LoanLayout><AiAssistant /></LoanLayout>
       </Route>
-      <Route path="/users">
-        <LoanLayout><Users /></LoanLayout>
+      <Route path="/ai-video">
+        <LoanLayout><AiVideo /></LoanLayout>
+      </Route>
+      <Route path="/branches">
+        <LoanLayout><Branches /></LoanLayout>
+      </Route>
+      <Route path="/employees">
+        <LoanLayout><Employees /></LoanLayout>
+      </Route>
+      <Route path="/settings">
+        <LoanLayout><Settings /></LoanLayout>
+      </Route>
+      <Route path="/audit-logs">
+        <LoanLayout><AuditLogs /></LoanLayout>
       </Route>
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
