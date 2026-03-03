@@ -2,12 +2,12 @@ import { trpc } from "@/lib/trpc";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getEffectiveRole, hasPermission } from "../../../shared/permissions";
+import { getEffectiveRole, hasPermission, getAiAnalysisDataScope } from "../../../shared/permissions";
 import {
   Brain, Send, Loader2, ShieldAlert, Sparkles, Bot, ImagePlus, FileSearch,
   CheckCircle2, AlertTriangle, User, CreditCard, DollarSign, TrendingDown,
   ArrowRight, Upload, X, Eye, Layers, CheckCheck, XCircle, ChevronDown, ChevronUp,
-  FileText, File as FileIcon
+  FileText, File as FileIcon, Globe, Users, UserCircle, Info
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
@@ -90,10 +90,33 @@ function readFileAsBase64(file: File): Promise<string> {
 
 type TabType = "chat" | "credit-extract" | "batch-extract";
 
+// 根据数据范围返回对应的快捷问题
+ function getScopeQuickPrompts(scope: "all" | "team" | "personal"): string[] {
+  if (scope === "all") return [
+    "分析本月各团队业绩表现，找出最佳和最差团队",
+    "根据当前放款数据，预测下月业绩趋势",
+    "分析各等级客户的转化率，给出优化建议",
+    "对比各分公司的运营效率，提出改进方案",
+  ];
+  if (scope === "team") return [
+    "分析本组本月客户开发进展和放款情况",
+    "本组各员工业绩对比，谁的表现最出色？",
+    "本组客户征信等级分布分析，哪类客户转化率更高？",
+    "本组近期放款趋势分析，建议下一步工作重心",
+  ];
+  return [
+    "分析我本月客户开发情况和放款进展",
+    "我的客户征信等级分布怎么样？有哪些高质量客户？",
+    "帮我分析最近客户资质特点，提供营销建议",
+    "我的业绩在团队中处于什么水平？如何提升？",
+  ];
+}
+
 export default function AiAnalysis() {
   const { user } = useAuth();
   const role = useMemo(() => getEffectiveRole(user as any), [user]);
   const canAccess = hasPermission(role, "view_ai_analysis");
+  const dataScope = useMemo(() => getAiAnalysisDataScope(role), [role]);
   const [activeTab, setActiveTab] = useState<TabType>("chat");
 
   if (!canAccess) {
@@ -101,10 +124,17 @@ export default function AiAnalysis() {
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
         <ShieldAlert className="w-16 h-16 text-muted-foreground/30 mb-4" />
         <h2 className="text-xl font-semibold text-foreground mb-2">权限不足</h2>
-        <p className="text-muted-foreground">AI分析功能仅对老板和总监角色开放</p>
+        <p className="text-muted-foreground">AI分析功能暂无访问权限</p>
       </div>
     );
   }
+
+  const scopeConfig = {
+    all: { icon: Globe, label: "全公司数据", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
+    team: { icon: Users, label: "本组/本部门数据", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+    personal: { icon: UserCircle, label: "个人数据", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
+  }[dataScope];
+  const ScopeIcon = scopeConfig.icon;
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
@@ -118,6 +148,11 @@ export default function AiAnalysis() {
             <h1 className="text-lg font-bold text-foreground">AI 智能分析</h1>
             <p className="text-xs text-muted-foreground">基于豆包大模型的业务数据深度分析 · doubao-seed-2-0-pro-260215</p>
           </div>
+        </div>
+        {/* 数据范围标识 */}
+        <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium ${scopeConfig.color}`}>
+          <ScopeIcon className="w-3.5 h-3.5" />
+          {scopeConfig.label}
         </div>
       </div>
 
@@ -153,7 +188,7 @@ export default function AiAnalysis() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === "chat" && <ChatPanel />}
+      {activeTab === "chat" && <ChatPanel dataScope={dataScope} />}
       {activeTab === "credit-extract" && <CreditExtractPanel />}
       {activeTab === "batch-extract" && <BatchExtractPanel />}
     </div>
@@ -161,12 +196,13 @@ export default function AiAnalysis() {
 }
 
 // ============ 智能对话面板 ============
-function ChatPanel() {
+function ChatPanel({ dataScope }: { dataScope: "all" | "team" | "personal" }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analyzeMut = trpc.aiAnalysis.analyze.useMutation();
+  const quickPrompts = useMemo(() => getScopeQuickPrompts(dataScope), [dataScope]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -198,7 +234,7 @@ function ChatPanel() {
             <h3 className="text-lg font-semibold text-foreground mb-2">开始智能分析</h3>
             <p className="text-sm text-muted-foreground mb-6 max-w-md">选择一个快捷问题或输入您的分析需求</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg">
-              {QUICK_PROMPTS.map((p, i) => (
+              {quickPrompts.map((p, i) => (
                 <button key={i} onClick={() => handleSend(p)} className="glass-card rounded-lg p-3 text-left text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
                   {p}
                 </button>

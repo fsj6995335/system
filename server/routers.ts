@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getEffectiveRole, hasPermission } from "@shared/permissions";
+import { getEffectiveRole, hasPermission, getAiAnalysisDataScope } from "@shared/permissions";
 import {
   getAllUsers, updateUser,
   getBranches, createBranch, updateBranch, deleteBranch,
@@ -62,6 +62,22 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { userId, ...data } = input;
         await updateUser(userId, data);
+        return { success: true };
+      }),
+    // 设置员工职位
+    updatePosition: withPermission("manage_employees")
+      .input(z.object({ userId: z.number(), position: z.string().max(128) }))
+      .mutation(async ({ ctx, input }) => {
+        await updateUser(input.userId, { position: input.position });
+        await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "update_position", module: "users", detail: `用户ID:${input.userId} 职位设为:${input.position}` });
+        return { success: true };
+      }),
+    // 调配员工到不同组
+    assignTeam: withPermission("manage_employees")
+      .input(z.object({ userId: z.number(), teamId: z.number().nullable(), branchId: z.number().nullable() }))
+      .mutation(async ({ ctx, input }) => {
+        await updateUser(input.userId, { teamId: input.teamId, branchId: input.branchId });
+        await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "assign_team", module: "users", detail: `用户ID:${input.userId} 调配至团队:${input.teamId ?? '无'} 分公司:${input.branchId ?? '无'}` });
         return { success: true };
       }),
   }),
@@ -691,14 +707,33 @@ export const appRouter = router({
         return { results, total: input.items.length, successCount: results.filter(r => r.status === "success").length };
       }),
 
+    // 获取当前角色的 AI 分析数据范围
+    getDataScope: withPermission("view_ai_analysis")
+      .query(({ ctx }) => {
+        const role = getEffectiveRole(ctx.user as any);
+        const scope = getAiAnalysisDataScope(role);
+        const scopeLabels: Record<string, string> = {
+          all: "全公司数据",
+          team: "本组/本部门数据",
+          personal: "个人数据",
+        };
+        return { scope, label: scopeLabels[scope], role, teamId: (ctx.user as any).teamId ?? null, branchId: (ctx.user as any).branchId ?? null };
+      }),
+
     analyze: withPermission("view_ai_analysis")
       .input(z.object({ question: z.string().min(1), context: z.string().optional(), imageUrl: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
         const DOUBAO_CHAT_API_KEY = process.env.DOUBAO_CHAT_API_KEY;
         if (!DOUBAO_CHAT_API_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "AI分析API未配置" });
+        // 根据角色自动注入数据范围提示
+        const role = getEffectiveRole(ctx.user as any);
+        const scope = getAiAnalysisDataScope(role);
+        const scopeHint = scope === "all" ? "你可以查看全公司数据。" : scope === "team" ? `你只能查看本组/本部门数据（teamId: ${(ctx.user as any).teamId ?? '未分配'}）。` : `你只能查看个人数据（userId: ${ctx.user.id}）。`;
         const userContent: any[] = [];
         if (input.imageUrl) userContent.push({ type: "input_image", image_url: input.imageUrl });
-        if (input.context) userContent.push({ type: "input_text", text: `数据背景：${input.context}` });
+        // 自动拼接数据范围说明
+        const contextText = [scopeHint, input.context].filter(Boolean).join(" ");
+        if (contextText) userContent.push({ type: "input_text", text: `数据背景：${contextText}` });
         userContent.push({ type: "input_text", text: input.question });
         const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/responses", {
           method: "POST",
@@ -711,8 +746,8 @@ export const appRouter = router({
         }
         const data = await response.json();
         const answer = data.output?.choices?.[0]?.message?.content ?? data.output?.text ?? data.output ?? "分析完成";
-        await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "ai_analyze", module: "ai_analysis", detail: `AI分析:${input.question.slice(0, 50)}` });
-        return { answer: typeof answer === "string" ? answer : JSON.stringify(answer) };
+        await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "ai_analyze", module: "ai_analysis", detail: `AI分析[${scope}]:${input.question.slice(0, 50)}` });
+        return { answer: typeof answer === "string" ? answer : JSON.stringify(answer), dataScope: scope };
       }),
   }),
 

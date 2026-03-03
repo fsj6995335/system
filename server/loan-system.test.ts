@@ -60,7 +60,8 @@ describe("RBAC Permission System", () => {
     expect(hasPermission("employee", "upload_credit_report")).toBe(true);
     expect(hasPermission("employee", "view_rankings")).toBe(true);
     expect(hasPermission("employee", "manage_branches")).toBe(false);
-    expect(hasPermission("employee", "view_ai_analysis")).toBe(false);
+    // v2.1: AI分析开放给所有角色（员工可查看个人数据）
+    expect(hasPermission("employee", "view_ai_analysis")).toBe(true);
   });
 
   it("getEffectiveRole should map admin to boss", () => {
