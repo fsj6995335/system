@@ -15,6 +15,8 @@ export const users = mysqlTable("users", {
   role: mysqlEnum("role", ["user", "admin", "boss", "director", "shareholder", "leader", "finance", "employee"]).default("employee").notNull(),
   branchId: int("branchId"),
   teamId: int("teamId"),
+  // 员工职位
+  position: varchar("position", { length: 128 }),
   // 用于角色切换测试
   simulatedRole: varchar("simulatedRole", { length: 32 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

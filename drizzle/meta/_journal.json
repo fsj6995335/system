@@ -8,6 +8,13 @@
       "when": 1772500848224,
       "tag": "0000_late_mac_gargan",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1772506683700,
+      "tag": "0001_salty_wong",
+      "breakpoints": true
     }
   ]
 }
