@@ -19,6 +19,7 @@ interface ArticleContent {
   imagePrompt: string;
   targetAudience: string;
   platform: string;
+  generatedImageUrl?: string;
 }
 
 const ARTICLE_TYPES: { value: ArticleType; label: string; icon: any; desc: string }[] = [
@@ -130,6 +131,23 @@ function ArticlePreview({ content, raw }: { content: ArticleContent | null; raw:
           </div>
         )}
       </div>
+
+      {/* AI 生成配图 */}
+      {content.generatedImageUrl && (
+        <div className="p-6 border-b border-border">
+          <div className="relative rounded-xl overflow-hidden bg-muted/20 border border-border">
+            <img
+              src={content.generatedImageUrl}
+              alt={content.title}
+              className="w-full h-auto object-cover"
+              style={{ maxHeight: "400px" }}
+            />
+            <div className="absolute top-2 right-2 px-2 py-1 rounded-md bg-black/60 text-white text-xs flex items-center gap-1">
+              <Sparkles className="w-3 h-3" />AI 配图
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Content Body */}
       <div className="p-6 space-y-4">
@@ -274,7 +292,7 @@ export default function AiVideo() {
 
             <Button onClick={handleSubmit} disabled={createMutation.isPending} className="w-full gap-2">
               {createMutation.isPending ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />图文生成中...</>
+                <><Loader2 className="w-4 h-4 animate-spin" />图文+配图生成中...</>
               ) : (
                 <><Sparkles className="w-4 h-4" />一键生成图文</>
               )}
@@ -293,6 +311,7 @@ export default function AiVideo() {
                 {[
                   { label: "支持类型", value: "营销推广、朋友圈、产品介绍、活动海报" },
                   { label: "生成内容", value: "标题、正文、亮点、标签、行动号召" },
+                  { label: "AI 配图", value: "自动生成与文案匹配的专业配图" },
                   { label: "一键复制", value: "生成后可一键复制到剪贴板" },
                   { label: "历史记录", value: "所有生成记录自动保存" },
                 ].map(({ label, value }) => (
@@ -341,12 +360,23 @@ export default function AiVideo() {
                       </div>
                       {task.status === "completed" && articleData && (
                         <div className="mt-3 p-3 rounded-lg bg-muted/20 border border-border">
-                          <p className="text-sm font-medium text-foreground">{articleData.title}</p>
-                          <p className="text-xs text-muted-foreground mt-1">{articleData.subtitle}</p>
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {articleData.tags?.map((tag: string, i: number) => (
-                              <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">#{tag}</span>
-                            ))}
+                          <div className="flex gap-3">
+                            {articleData.generatedImageUrl && (
+                              <img
+                                src={articleData.generatedImageUrl}
+                                alt={articleData.title}
+                                className="w-20 h-20 rounded-lg object-cover flex-shrink-0 border border-border"
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-foreground">{articleData.title}</p>
+                              <p className="text-xs text-muted-foreground mt-1">{articleData.subtitle}</p>
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {articleData.tags?.map((tag: string, i: number) => (
+                                  <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">#{tag}</span>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                           <Button
                             variant="ghost"

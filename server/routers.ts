@@ -360,10 +360,49 @@ export const appRouter = router({
             answerStr = typeof answer === "string" ? answer : JSON.stringify(answer);
           }
           if (!answerStr) answerStr = JSON.stringify(data);
+
+          // 尝试从文案中提取 imagePrompt 并调用火山方舟 Seedream 5.0 图片生成 API
+          let imageUrl = "";
+          try {
+            const jsonMatch = answerStr.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              const imgPrompt = parsed.imagePrompt || parsed.title || input.prompt;
+              if (DOUBAO_CHAT_API_KEY) {
+                // 调用火山方舟 Seedream 5.0 图片生成 API
+                const imgResponse = await fetch("https://ark.cn-beijing.volces.com/api/v3/images/generations", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${DOUBAO_CHAT_API_KEY}` },
+                  body: JSON.stringify({
+                    model: "doubao-seedream-5-0-260128",
+                    prompt: `专业贷款营销海报，${imgPrompt}，商务风格，简洁大气，蓝色调，现代设计`,
+                    size: "2K",
+                    watermark: false,
+                  }),
+                });
+                if (imgResponse.ok) {
+                  const imgData = await imgResponse.json();
+                  if (imgData.data?.[0]?.url) {
+                    imageUrl = imgData.data[0].url;
+                    const updatedParsed = { ...parsed, generatedImageUrl: imageUrl };
+                    answerStr = JSON.stringify(updatedParsed);
+                  }
+                } else {
+                  const errText = await imgResponse.text().catch(() => "");
+                  console.error("Seedream 图片生成失败:", errText);
+                }
+              } else {
+                console.error("未配置 DOUBAO_CHAT_API_KEY，跳过图片生成");
+              }
+            }
+          } catch (imgErr: any) {
+            console.error("图片生成出错:", imgErr.message);
+          }
+
           // 将生成的图文内容存储到 videoUrl 字段（复用现有字段）
           await updateAiVideoTask(taskDbId, { status: "completed", videoUrl: answerStr });
           await createOperationLog({ userId: ctx.user.id, userName: ctx.user.name ?? "", action: "create_article", module: "ai_article", detail: `生成图文:${input.title ?? input.prompt.slice(0, 30)}` });
-          return { taskDbId, content: answerStr };
+          return { taskDbId, content: answerStr, imageUrl };
         } catch (err: any) {
           if (err instanceof TRPCError) throw err;
           await updateAiVideoTask(taskDbId, { status: "failed", errorMessage: err.message });
